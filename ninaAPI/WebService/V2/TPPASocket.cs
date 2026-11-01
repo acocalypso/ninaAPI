@@ -48,8 +48,11 @@ namespace ninaAPI.WebService.V2
 
     public class TPPASocket : WebSocketModule, ISubscriber
     {
+        private readonly WebSocketClientQueues queues;
+
         public TPPASocket(string urlPath) : base(urlPath, true)
         {
+            queues = new WebSocketClientQueues("TPPA WebSocket", SendAsync, CloseAsync);
             AdvancedAPI.Controls.MessageBroker.Subscribe("PolarAlignmentPlugin_PolarAlignment_AlignmentError", this);
             AdvancedAPI.Controls.MessageBroker.Subscribe("PolarAlignmentPlugin_PolarAlignment_Progress", this);
         }
@@ -110,28 +113,32 @@ namespace ninaAPI.WebService.V2
         protected override Task OnClientConnectedAsync(IWebSocketContext context)
         {
             Logger.Info("TPPA WebSocket connected " + context.RemoteEndPoint.ToString());
+            queues.Add(context);
             return Task.CompletedTask;
         }
 
-        public async Task Send(HttpResponse payload)
+        protected override Task OnClientDisconnectedAsync(IWebSocketContext context)
+        {
+            queues.Remove(context);
+            return Task.CompletedTask;
+        }
+
+        // Enqueues for every client and returns at once, so a dead or slow client neither holds up the
+        // polar alignment's progress messages nor the other clients (see WebSocketClientQueues).
+        public Task Send(HttpResponse payload)
         {
             Logger.Trace("Sending " + payload.Response + " to TPPA WebSocket");
-            string json = JsonConvert.SerializeObject(payload);
-            foreach (IWebSocketContext context in ActiveContexts)
+            queues.Broadcast(JsonConvert.SerializeObject(payload));
+            return Task.CompletedTask;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
             {
-                try
-                {
-                    // EmbedIO's SendAsync has no timeout, so a dead/stuck client could otherwise
-                    // block this broadcast indefinitely. Bound each send and keep going so one bad
-                    // client cannot starve the others. The abandoned send for a dead socket is left
-                    // to EmbedIO's KeepAliveInterval (default 30s) to eventually clean up.
-                    await SendAsync(context, json).WaitAsync(TimeSpan.FromSeconds(5));
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error(ex, "Failed to send message to TPPA WebSocket client");
-                }
+                queues.Dispose();
             }
+            base.Dispose(disposing);
         }
 
         // From ISubscriber

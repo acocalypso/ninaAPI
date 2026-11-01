@@ -54,8 +54,12 @@ namespace ninaAPI.WebService.V2
         private static bool sendConsumerEvents = false;
 
         private static WebSocketV2 instance;
+
+        private readonly WebSocketClientQueues queues;
+
         public WebSocketV2(string urlPath) : base(urlPath, true)
         {
+            queues = new WebSocketClientQueues("WebSocket", SendAsync, CloseAsync);
             instance = this;
         }
 
@@ -178,6 +182,13 @@ namespace ninaAPI.WebService.V2
         protected override Task OnClientConnectedAsync(IWebSocketContext context)
         {
             Logger.Info("WebSocket connected " + context.RemoteEndPoint.ToString());
+            queues.Add(context);
+            return Task.CompletedTask;
+        }
+
+        protected override Task OnClientDisconnectedAsync(IWebSocketContext context)
+        {
+            queues.Remove(context);
             return Task.CompletedTask;
         }
 
@@ -199,13 +210,23 @@ namespace ninaAPI.WebService.V2
             return false;
         }
 
-        public async Task Send(HttpResponse payload)
+        /// <summary>
+        /// Enqueues the payload for every client and returns at once: callers include handlers that
+        /// NINA awaits, which must not wait for a slow or vanished client (see WebSocketClientQueues).
+        /// </summary>
+        public Task Send(HttpResponse payload)
         {
-            foreach (IWebSocketContext context in ActiveContexts)
+            queues.Broadcast(JsonConvert.SerializeObject(payload));
+            return Task.CompletedTask;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
             {
-                Logger.Trace("Sending to " + context.RemoteEndPoint.ToString());
-                await SendAsync(context, JsonConvert.SerializeObject(payload));
+                queues.Dispose();
             }
+            base.Dispose(disposing);
         }
     }
 }
