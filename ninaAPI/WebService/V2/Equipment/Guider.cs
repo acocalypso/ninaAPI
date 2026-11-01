@@ -185,19 +185,28 @@ namespace ninaAPI.WebService.V2
             }
         }
 
+        // async void: an exception escaping it ends the process when there is no synchronization
+        // context (headless pins), so it logs instead.
         private static async void GuiderPropertyChanged(object sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName != nameof(IGuider.State))
+            try
             {
-                return;
+                if (e.PropertyName != nameof(IGuider.State))
+                {
+                    return;
+                }
+                string state = (sender as IGuider)?.State;
+                if (string.IsNullOrEmpty(state) || state == lastState)
+                {
+                    return;
+                }
+                lastState = state;
+                await WebSocketV2.SendAndAddEvent("GUIDER-STATE", new Dictionary<string, object>() { { "State", state } });
             }
-            string state = (sender as IGuider)?.State;
-            if (string.IsNullOrEmpty(state) || state == lastState)
+            catch (Exception ex)
             {
-                return;
+                Logger.Error("GUIDER-STATE event failed", ex);
             }
-            lastState = state;
-            await WebSocketV2.SendAndAddEvent("GUIDER-STATE", new Dictionary<string, object>() { { "State", state } });
         }
 
         private readonly Func<object, EventArgs, Task> GuiderConnectedHandler = async (_, _) => await WebSocketV2.SendAndAddEvent("GUIDER-CONNECTED");
@@ -241,15 +250,23 @@ namespace ninaAPI.WebService.V2
 
         public async void UpdateDeviceInfo(GuiderInfo deviceInfo)
         {
-            if (deviceInfo?.Connected != true)
+            try
             {
-                // A reconnect may bring back the same guider object in the same state,
-                // which is still news after the disconnect
-                lastState = null;
+                if (deviceInfo?.Connected != true)
+                {
+                    // A reconnect may bring back the same guider object in the same state,
+                    // which is still news after the disconnect
+                    lastState = null;
+                }
+                // Broadcast on connect and disconnect, which is when the device changes
+                ObserveGuider();
+                await WebSocketV2.SendConsumerEvent("GUIDER");
             }
-            // Broadcast on connect and disconnect, which is when the device changes
-            ObserveGuider();
-            await WebSocketV2.SendConsumerEvent("GUIDER");
+            catch (Exception ex)
+            {
+                // async void, see GuiderPropertyChanged
+                Logger.Error("Updating the observed guider failed", ex);
+            }
         }
 
         public void Dispose()

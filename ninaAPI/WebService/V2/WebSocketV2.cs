@@ -89,35 +89,46 @@ namespace ninaAPI.WebService.V2
             await SendAndAddEvent(eventName, time, null);
         }
 
+        /// <summary>
+        /// Never throws: most callers are async void event handlers, and an exception from one of
+        /// those ends the process when there is no synchronization context (headless pins).
+        /// </summary>
         public static async Task SendAndAddEvent(string eventName, DateTime time, Dictionary<string, object> data)
         {
-            HttpResponse response = new HttpResponse();
-            response.Type = HttpResponse.TypeSocket;
+            try
+            {
+                HttpResponse response = new HttpResponse();
+                response.Type = HttpResponse.TypeSocket;
 
-            Hashtable responseData = new Hashtable
-            {
-                { "Event", eventName }
-            };
-            if (data != null)
-            {
-                foreach (KeyValuePair<string, object> kvp in data)
+                Hashtable responseData = new Hashtable
                 {
-                    responseData.Add(kvp.Key, kvp.Value);
+                    { "Event", eventName }
+                };
+                if (data != null)
+                {
+                    foreach (KeyValuePair<string, object> kvp in data)
+                    {
+                        responseData.Add(kvp.Key, kvp.Value);
+                    }
                 }
+
+                response.Response = responseData;
+
+                // Copy the event as JSON, so later changes to the sent objects don't alter the history.
+                // Read it back with System.Text.Json because /event-history is written with it: nested
+                // objects read back by Newtonsoft would come out there as {"RA":[],...}.
+                string json = JsonConvert.SerializeObject(responseData);
+                Dictionary<string, object> eventTable = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json);
+                eventTable.Add("Time", time);
+                HttpResponse Event = new HttpResponse() { Type = HttpResponse.TypeSocket, Response = eventTable };
+                AddEvent(Event);
+
+                await SendEvent(response);
             }
-
-            response.Response = responseData;
-
-            // Copy the event as JSON, so later changes to the sent objects don't alter the history.
-            // Read it back with System.Text.Json because /event-history is written with it: nested
-            // objects read back by Newtonsoft would come out there as {"RA":[],...}.
-            string json = JsonConvert.SerializeObject(responseData);
-            Dictionary<string, object> eventTable = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json);
-            eventTable.Add("Time", time);
-            HttpResponse Event = new HttpResponse() { Type = HttpResponse.TypeSocket, Response = eventTable };
-            AddEvent(Event);
-
-            await SendEvent(response);
+            catch (Exception ex)
+            {
+                Logger.Error($"WebSocket event {eventName} failed", ex);
+            }
         }
 
         public static bool IsAvailable => instance is not null;

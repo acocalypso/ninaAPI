@@ -88,34 +88,36 @@ namespace ninaAPI.WebService.V2
 
         private ImageResponse() { }
 
+        // Null-safe: the event can come without statistics, star analysis or recorded RMS, and
+        // what is missing reads as 0 or null rather than failing the whole event.
         public static ImageResponse FromEvent(ImageSavedEventArgs e)
         {
             return new ImageResponse()
             {
                 Id = Guid.NewGuid().ToString("N"),
                 ExposureTime = e.Duration,
-                TargetName = e.MetaData.Target.Name,
-                ImageType = e.MetaData.Image.ImageType,
+                TargetName = e.MetaData?.Target?.Name,
+                ImageType = e.MetaData?.Image?.ImageType,
                 Filter = e.Filter,
-                RmsText = e.MetaData.Image.RecordedRMS.TotalText,
-                Temperature = e.MetaData.Camera.Temperature,
-                CameraName = e.MetaData.Camera.Name,
-                Gain = e.MetaData.Camera.Gain,
-                Offset = e.MetaData.Camera.Offset,
+                RmsText = e.MetaData?.Image?.RecordedRMS?.TotalText,
+                Temperature = e.MetaData?.Camera?.Temperature ?? 0,
+                CameraName = e.MetaData?.Camera?.Name,
+                Gain = e.MetaData?.Camera?.Gain ?? 0,
+                Offset = e.MetaData?.Camera?.Offset ?? 0,
                 Date = DateTime.Now,
-                TelescopeName = e.MetaData.Telescope.Name,
-                FocalLength = e.MetaData.Telescope.FocalLength,
-                StDev = e.Statistics.StDev,
-                Mean = e.Statistics.Mean,
-                Median = e.Statistics.Median,
-                Stars = e.StarDetectionAnalysis.DetectedStars,
-                HFR = e.StarDetectionAnalysis.HFR,
-                HFRStDev = e.StarDetectionAnalysis.HFRStDev,
-                Min = e.Statistics.Min,
-                Max = e.Statistics.Max,
+                TelescopeName = e.MetaData?.Telescope?.Name,
+                FocalLength = e.MetaData?.Telescope?.FocalLength ?? 0,
+                StDev = e.Statistics?.StDev ?? 0,
+                Mean = e.Statistics?.Mean ?? 0,
+                Median = e.Statistics?.Median ?? 0,
+                Stars = e.StarDetectionAnalysis?.DetectedStars ?? 0,
+                HFR = e.StarDetectionAnalysis?.HFR ?? 0,
+                HFRStDev = e.StarDetectionAnalysis?.HFRStDev ?? 0,
+                Min = e.Statistics?.Min ?? 0,
+                Max = e.Statistics?.Max ?? 0,
                 Path = e.PathToImage,
                 IsBayered = e.IsBayered,
-                FocuserPosition = e.MetaData.Focuser?.Position,
+                FocuserPosition = e.MetaData?.Focuser?.Position,
             };
         }
 
@@ -178,24 +180,38 @@ namespace ninaAPI.WebService.V2
             AdvancedAPI.Controls.Imaging.ImagePrepared -= ImagePrepared;
         }
 
+        // The image handlers are async void: an exception escaping them ends the process when there
+        // is no synchronization context (headless pins), so they log instead.
         private static async void ImagePrepared(object sender, ImagePreparedEventArgs e)
         {
-            lock (imageLock)
+            try
             {
-                PreparedImage = e.RenderedImage;
+                lock (imageLock)
+                {
+                    PreparedImage = e.RenderedImage;
+                }
+
+                HttpResponse response = new HttpResponse() { Type = HttpResponse.TypeSocket };
+
+                response.Response = new Dictionary<string, object>() { { "Event", "IMAGE-PREPARED" } };
+
+                await WebSocketV2.SendEvent(response);
             }
-
-            HttpResponse response = new HttpResponse() { Type = HttpResponse.TypeSocket };
-
-            response.Response = new Dictionary<string, object>() { { "Event", "IMAGE-PREPARED" } };
-
-            await WebSocketV2.SendEvent(response);
+            catch (Exception ex)
+            {
+                Logger.Error("IMAGE-PREPARED event failed", ex);
+            }
         }
 
         private static void CacheThumbnail(ImageSavedEventArgs e)
         {
             if (!Properties.Settings.Default.CreateThumbnails)
                 return;
+            if (e.Image == null)
+            {
+                Logger.Warning("No thumbnail for the saved image: the event carries no rendered image");
+                return;
+            }
             lock (imageLock)
             {
                 string thumbnailFile = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"thumbnails-{Environment.ProcessId}");
@@ -218,24 +234,39 @@ namespace ninaAPI.WebService.V2
 
         private static async void ImageSaved(object sender, ImageSavedEventArgs e)
         {
-            HttpResponse response = new HttpResponse() { Type = HttpResponse.TypeSocket };
-
-            var r = ImageResponse.FromEvent(e);
-
-            response.Response = new ImageEvent(r);
-
-            HttpResponse imageEvent = new HttpResponse() { Type = HttpResponse.TypeSocket, Response = new Dictionary<string, object>() { { "Event", "IMAGE-SAVE" }, { "Time", DateTime.Now } } };
-
-            lock (imageLock)
+            try
             {
-                Images.Add(r);
+                HttpResponse response = new HttpResponse() { Type = HttpResponse.TypeSocket };
+
+                var r = ImageResponse.FromEvent(e);
+
+                response.Response = new ImageEvent(r);
+
+                HttpResponse imageEvent = new HttpResponse() { Type = HttpResponse.TypeSocket, Response = new Dictionary<string, object>() { { "Event", "IMAGE-SAVE" }, { "Time", DateTime.Now } } };
+
+                lock (imageLock)
+                {
+                    Images.Add(r);
+                }
+
+                WebSocketV2.AddEvent(imageEvent);
+
+                // A thumbnail that can't be written (full or read-only storage) must not cost the event.
+                try
+                {
+                    CacheThumbnail(e);
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error("Writing the thumbnail of the saved image failed", ex);
+                }
+
+                await WebSocketV2.SendEvent(response);
             }
-
-            WebSocketV2.AddEvent(imageEvent);
-
-            CacheThumbnail(e);
-
-            await WebSocketV2.SendEvent(response);
+            catch (Exception ex)
+            {
+                Logger.Error("IMAGE-SAVE event failed", ex);
+            }
         }
     }
 

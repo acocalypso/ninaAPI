@@ -279,21 +279,37 @@ namespace ninaAPI.WebService.V2.CustomDrivers
 
         private NetworkedRotator rotator;
 
+        // async void event handlers: an exception escaping them ends the process when there is no
+        // synchronization context (headless pins), so they log instead.
         private async void NetworkedRotator_MoveRequested(object sender, object _)
         {
-            rotator = sender as NetworkedRotator;
-            foreach (IWebSocketContext context in ActiveContexts)
+            try
             {
-                await SendAsync(context, makeRotationResponse());
+                rotator = sender as NetworkedRotator;
+                foreach (IWebSocketContext context in ActiveContexts)
+                {
+                    await SendAsync(context, makeRotationResponse());
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Sending the networked rotator's move request failed", ex);
             }
         }
 
         private async void NetworkedRotator_RotationCompleted(object sender, object _)
         {
-            rotator = null;
-            foreach (IWebSocketContext context in ActiveContexts)
+            try
             {
-                await SendAsync(context, makeRotationCompletedResponse());
+                rotator = null;
+                foreach (IWebSocketContext context in ActiveContexts)
+                {
+                    await SendAsync(context, makeRotationCompletedResponse());
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Sending the networked rotator's rotation completed message failed", ex);
             }
         }
 
