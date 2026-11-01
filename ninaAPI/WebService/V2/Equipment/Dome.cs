@@ -112,8 +112,22 @@ namespace ninaAPI.WebService.V2
 
     public partial class ControllerV2
     {
-        private static CancellationTokenSource DomeToken;
+        // Shutter moves and dome motions (slew, park, home) are cancelled separately: a slew used to cancel the
+        // running close with the one shared token, and an ASCOM dome's AbortSlew stops the shutter too
+        private static CancellationTokenSource ShutterToken;
+        private static CancellationTokenSource MotionToken;
         private static CancellationTokenSource FollowToken;
+
+        private const string ShutterClosingError = "The shutter is closing; try again when it is closed";
+
+        // The close this API started, until it ends: the dome info is only polled every few seconds and can still read
+        // "open" while the shutter closes
+        private static Task CloseTask;
+
+        // While the shutter closes, nothing else may start: cancelling an earlier slew calls AbortSlew on an ASCOM dome,
+        // which stops the shutter as well (ASCOM IDome), and the roof would stay half open
+        private static bool ShutterClosing(IDomeMediator dome) =>
+            CloseTask is { IsCompleted: false } || dome.GetInfo().ShutterStatus == ShutterState.ShutterClosing;
 
 
         [Route(HttpVerbs.Get, "/equipment/dome/info")]
@@ -155,9 +169,9 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    DomeToken?.Cancel();
-                    DomeToken = new CancellationTokenSource();
-                    dome.OpenShutter(DomeToken.Token);
+                    ShutterToken?.Cancel();
+                    ShutterToken = new CancellationTokenSource();
+                    dome.OpenShutter(ShutterToken.Token);
                     response.Response = "Shutter opening";
                 }
             }
@@ -189,9 +203,9 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    DomeToken?.Cancel();
-                    DomeToken = new CancellationTokenSource();
-                    dome.CloseShutter(DomeToken.Token);
+                    ShutterToken?.Cancel();
+                    ShutterToken = new CancellationTokenSource();
+                    CloseTask = dome.CloseShutter(ShutterToken.Token);
                     response.Response = "Shutter closing";
                 }
             }
@@ -222,7 +236,8 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    DomeToken?.Cancel();
+                    ShutterToken?.Cancel();
+                    MotionToken?.Cancel();
                     var vm = typeof(DomeMediator).GetField("handler", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(dome) as DomeVM;
                     vm.StopCommand.Execute(null);
                     response.Response = "Movement stopped";
@@ -317,10 +332,14 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Dome not connected", 409));
                 }
+                else if (ShutterClosing(dome))
+                {
+                    response = CoreUtility.CreateErrorTable(new Error(ShutterClosingError, 409));
+                }
                 else
                 {
-                    DomeToken?.Cancel();
-                    DomeToken = new CancellationTokenSource();
+                    MotionToken?.Cancel();
+                    MotionToken = new CancellationTokenSource();
                     if (AdvancedAPI.Controls.DomeFollower.IsFollowing)
                     {
                         await dome.DisableFollowing(CancellationToken.None);
@@ -328,12 +347,12 @@ namespace ninaAPI.WebService.V2
 
                     if (waitToFinish)
                     {
-                        await dome.SlewToAzimuth(azimuth, DomeToken.Token);
+                        await dome.SlewToAzimuth(azimuth, MotionToken.Token);
                         response.Response = "Dome Slew finished";
                     }
                     else
                     {
-                        dome.SlewToAzimuth(azimuth, DomeToken.Token);
+                        dome.SlewToAzimuth(azimuth, MotionToken.Token);
                         response.Response = "Dome Slew Started";
                     }
                 }
@@ -397,11 +416,15 @@ namespace ninaAPI.WebService.V2
                 {
                     response.Response = "Dome already parked";
                 }
+                else if (ShutterClosing(dome))
+                {
+                    response = CoreUtility.CreateErrorTable(new Error(ShutterClosingError, 409));
+                }
                 else
                 {
-                    DomeToken?.Cancel();
-                    DomeToken = new CancellationTokenSource();
-                    dome.Park(DomeToken.Token);
+                    MotionToken?.Cancel();
+                    MotionToken = new CancellationTokenSource();
+                    dome.Park(MotionToken.Token);
                     response.Response = "Parking";
                 }
             }
@@ -431,11 +454,15 @@ namespace ninaAPI.WebService.V2
                 {
                     response.Response = "Dome already homed";
                 }
+                else if (ShutterClosing(dome))
+                {
+                    response = CoreUtility.CreateErrorTable(new Error(ShutterClosingError, 409));
+                }
                 else
                 {
-                    DomeToken?.Cancel();
-                    DomeToken = new CancellationTokenSource();
-                    dome.FindHome(DomeToken.Token);
+                    MotionToken?.Cancel();
+                    MotionToken = new CancellationTokenSource();
+                    dome.FindHome(MotionToken.Token);
                     response.Response = "Homing";
                 }
             }
