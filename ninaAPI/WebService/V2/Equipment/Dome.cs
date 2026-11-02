@@ -163,6 +163,12 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Dome not connected", 409));
                 }
+                else if (ShutterClosing(dome))
+                {
+                    // Opening would cancel the close's token first, which stops the shutter, and the open itself can
+                    // still be refused (unsafe), leaving the roof half open
+                    response = CoreUtility.CreateErrorTable(new Error(ShutterClosingError, 409));
+                }
                 else if (dome.GetInfo().ShutterStatus == ShutterState.ShutterOpen || dome.GetInfo().ShutterStatus == ShutterState.ShutterOpening)
                 {
                     response.Response = "Shutter already open";
