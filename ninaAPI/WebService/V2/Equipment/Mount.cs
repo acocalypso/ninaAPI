@@ -187,7 +187,7 @@ namespace ninaAPI.WebService.V2
                     {
                         mount.StopSlew();
                     }
-                    mount.FindHome(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                    BackgroundOperation.Report(mount.FindHome(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "MOUNT-HOME-FAILED", "Mount homing");
                     response.Response = "Homing";
                 }
             }
@@ -271,7 +271,7 @@ namespace ninaAPI.WebService.V2
                     {
                         mount.StopSlew();
                     }
-                    mount.ParkTelescope(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                    BackgroundOperation.Report(mount.ParkTelescope(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "MOUNT-PARK-FAILED", "Mount park");
                     response.Response = "Parking";
                 }
             }
@@ -303,7 +303,7 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    mount.UnparkTelescope(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                    BackgroundOperation.Report(mount.UnparkTelescope(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "MOUNT-UNPARK-FAILED", "Mount unpark");
                     response.Response = "Unparking";
                 }
             }
@@ -335,7 +335,7 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    mount.MeridianFlip(mount.GetInfo().Coordinates, new CancellationTokenSource().Token);
+                    BackgroundOperation.Report(mount.MeridianFlip(mount.GetInfo().Coordinates, new CancellationTokenSource().Token), "MOUNT-FLIP-FAILED", "Mount meridian flip");
                     response.Response = "Flipping";
                 }
             }

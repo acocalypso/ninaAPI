@@ -315,8 +315,16 @@ namespace ninaAPI.WebService.V2
                 {
                     GuideToken?.Cancel();
                     GuideToken = new CancellationTokenSource();
-                    await guider.StartGuiding(calibrate, AdvancedAPI.Controls.StatusMediator.GetStatus(), GuideToken.Token);
-                    response.Response = "Guiding started";
+                    // StartGuiding answers false when guiding could not be started (e.g. a failed calibration): the
+                    // answer was "Guiding started" all the same
+                    if (await guider.StartGuiding(calibrate, AdvancedAPI.Controls.StatusMediator.GetStatus(), GuideToken.Token))
+                    {
+                        response.Response = "Guiding started";
+                    }
+                    else
+                    {
+                        response = CoreUtility.CreateErrorTable(new Error("Guiding could not be started", 500));
+                    }
                 }
                 else
                 {

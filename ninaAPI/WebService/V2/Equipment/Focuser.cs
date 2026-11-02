@@ -133,7 +133,7 @@ namespace ninaAPI.WebService.V2
                 {
                     FocuserToken?.Cancel();
                     FocuserToken = new CancellationTokenSource();
-                    focuser.MoveFocuser(position, FocuserToken.Token);
+                    BackgroundOperation.Report(focuser.MoveFocuser(position, FocuserToken.Token), "FOCUSER-MOVE-FAILED", "Focuser move");
                     response.Response = "Move started";
                 }
             }

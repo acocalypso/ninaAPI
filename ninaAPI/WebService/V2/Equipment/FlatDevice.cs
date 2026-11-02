@@ -101,7 +101,7 @@ namespace ninaAPI.WebService.V2
 
                 if (flat.GetInfo().Connected)
                 {
-                    flat.ToggleLight(on, AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                    BackgroundOperation.Report(flat.ToggleLight(on, AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "FLATDEVICE-LIGHT-FAILED", "Flat device light");
                     response.Response = "Flatdevice light set";
                 }
                 else
@@ -130,11 +130,11 @@ namespace ninaAPI.WebService.V2
                 {
                     if (closed)
                     {
-                        flat.CloseCover(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                        BackgroundOperation.Report(flat.CloseCover(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "FLATDEVICE-COVER-FAILED", "Flat device cover close");
                     }
                     else
                     {
-                        flat.OpenCover(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                        BackgroundOperation.Report(flat.OpenCover(AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "FLATDEVICE-COVER-FAILED", "Flat device cover open");
                     }
                     response.Response = "Flatdevice cover set";
                 }
@@ -162,7 +162,7 @@ namespace ninaAPI.WebService.V2
 
                 if (flat.GetInfo().Connected)
                 {
-                    flat.SetBrightness(brightness, AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token);
+                    BackgroundOperation.Report(flat.SetBrightness(brightness, AdvancedAPI.Controls.StatusMediator.GetStatus(), new CancellationTokenSource().Token), "FLATDEVICE-BRIGHTNESS-FAILED", "Flat device brightness");
                     response.Response = "Flatdevice brightness set";
                 }
                 else

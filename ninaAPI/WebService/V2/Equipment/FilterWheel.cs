@@ -153,7 +153,7 @@ namespace ninaAPI.WebService.V2
                     }
                     else
                     {
-                        filterwheel.ChangeFilter(profile.FilterWheelSettings.FilterWheelFilters[filterId], progress: AdvancedAPI.Controls.StatusMediator.GetStatus());
+                        BackgroundOperation.Report(filterwheel.ChangeFilter(profile.FilterWheelSettings.FilterWheelFilters[filterId], progress: AdvancedAPI.Controls.StatusMediator.GetStatus()), "FILTERWHEEL-CHANGE-FAILED", "Filter change");
                         response.Response = "Filter changed";
                     }
                 }

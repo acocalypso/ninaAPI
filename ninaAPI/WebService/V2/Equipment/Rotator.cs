@@ -126,7 +126,7 @@ namespace ninaAPI.WebService.V2
                 {
                     RotatorToken?.Cancel();
                     RotatorToken = new CancellationTokenSource();
-                    rotator.Move(position, RotatorToken.Token);
+                    BackgroundOperation.Report(rotator.Move(position, RotatorToken.Token), "ROTATOR-MOVE-FAILED", "Rotator move");
                     response.Response = "Rotator move started";
                 }
             }
@@ -156,7 +156,7 @@ namespace ninaAPI.WebService.V2
                 {
                     RotatorToken?.Cancel();
                     RotatorToken = new CancellationTokenSource();
-                    rotator.MoveMechanical(position, RotatorToken.Token);
+                    BackgroundOperation.Report(rotator.MoveMechanical(position, RotatorToken.Token), "ROTATOR-MOVE-FAILED", "Rotator mechanical move");
                     response.Response = "Rotator move started";
                 }
             }
