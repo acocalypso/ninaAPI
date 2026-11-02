@@ -215,6 +215,12 @@ namespace ninaAPI.WebService.V2
         private static PlateSolveResult plateSolveResult;
         private static bool isBayered;
         private static Task CaptureTask;
+
+        // a capture is checked and started under this lock, and holds the camera until its exposure is down: a second
+        // start between the IsExposing check and the camera taking the exposure (another client, a double tap) started a
+        // second exposure and replaced the first one's task. Its processing (PNG, stars, solve) may overlap the next one
+        private static readonly object CaptureStartLock = new();
+        private static bool captureExposing;
         internal static Dictionary<string, object> lastCaptureStatistics;
 
         [Route(HttpVerbs.Get, "/equipment/camera/info")]
@@ -829,18 +835,33 @@ namespace ninaAPI.WebService.V2
                 // wants result, task is running => error
                 // wants result, task is not running => result
                 // wants capture, camera exposing => error
-                if (getResult && CaptureTask is null)
+                var captureTask = CaptureTask;
+                if (getResult && captureTask is null)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("No capture processed", 409));
                 }
-                else if (getResult && !CaptureTask.IsCompleted)
+                else if (getResult && !captureTask.IsCompleted)
                 {
                     response.Response = "Capture already in progress";
                 }
-                else if (getResult && CaptureTask.IsCompleted)
+                else if (getResult && !captureTask.IsCompletedSuccessfully)
                 {
-                    Bitmap img = new Bitmap(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"temp.png"));
-                    BitmapSource source = ImageUtility.ConvertBitmap(img);
+                    // a failed capture leaves the previous capture's temp.png behind: it was served as this capture's image
+                    response = CoreUtility.CreateErrorTable(new Error($"Capture failed: {captureTask.Exception?.GetBaseException().Message ?? "cancelled"}", 500));
+                }
+                else if (getResult && !stream && omitImage)
+                {
+                    // only the solve result: the full resolution PNG was decoded for every such request (clients poll it)
+                    response.Response = new CaptureResponse() { PlateSolveResult = plateSolveResult, Image = null };
+                }
+                else if (getResult)
+                {
+                    BitmapSource source;
+                    using (Bitmap img = new Bitmap(Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"temp.png")))
+                    {
+                        source = ImageUtility.ConvertBitmap(img);
+                    }
+
                     if (stream)
                     {
                         BitmapEncoder encoder = null;
@@ -869,59 +890,65 @@ namespace ninaAPI.WebService.V2
                     }
                     else
                     {
-                        if (!omitImage)
-                        {
-                            string image = string.Empty;
-                            if (scale == 0 && resize)
-                                image = BitmapHelper.ResizeAndConvertBitmap(source, resolution, quality);
-                            if (scale != 0 && resize)
-                                image = BitmapHelper.ScaleAndConvertBitmap(source, scale, quality);
-                            if (!resize)
-                                image = BitmapHelper.ScaleAndConvertBitmap(source, 1, quality);
+                        string image = string.Empty;
+                        if (scale == 0 && resize)
+                            image = BitmapHelper.ResizeAndConvertBitmap(source, resolution, quality);
+                        if (scale != 0 && resize)
+                            image = BitmapHelper.ScaleAndConvertBitmap(source, scale, quality);
+                        if (!resize)
+                            image = BitmapHelper.ScaleAndConvertBitmap(source, 1, quality);
 
-                            response.Response = new CaptureResponse() { Image = image, PlateSolveResult = plateSolveResult };
-                        }
-                        else
-                        {
-                            response.Response = new CaptureResponse() { PlateSolveResult = plateSolveResult, Image = null };
-                        }
+                        response.Response = new CaptureResponse() { Image = image, PlateSolveResult = plateSolveResult };
                     }
                 }
                 else if (!getResult && !cam.GetInfo().Connected)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Camera not connected", 409));
                 }
-                else if (!getResult && cam.GetInfo().IsExposing)
+                else if (!getResult && (cam.GetInfo().IsExposing || !TakeCameraForCapture()))
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Camera currently exposing", 409));
                 }
                 else
                 {
-                    CaptureTask = Task.Run(async () =>
+                    var started = Task.Run(async () =>
                     {
-                        plateSolveResult = null;
-                        lastCaptureStatistics = null;
-                        IPlateSolveSettings settings = AdvancedAPI.Controls.Profile.ActiveProfile.PlateSolveSettings;
-
-                        CaptureSequence sequence = new CaptureSequence(
-                            duration < 0 ? settings.ExposureTime : duration,
-                            isImageTypeValid(imageType) ? imageType.ToUpper() : CaptureSequence.ImageTypes.SNAPSHOT,
-                            AdvancedAPI.Controls.FilterWheel.GetInfo().SelectedFilter,
-                            new BinningMode(cam.GetInfo().BinX, cam.GetInfo().BinY),
-                            1);
-
-                        if (!HttpContext.IsParameterOmitted(nameof(gain)) && gain >= 0)
+                        IPlateSolveSettings settings;
+                        IExposureData exposure;
+                        try
                         {
-                            sequence.Gain = gain;
+                            plateSolveResult = null;
+                            lastCaptureStatistics = null;
+                            settings = AdvancedAPI.Controls.Profile.ActiveProfile.PlateSolveSettings;
+
+                            CaptureSequence sequence = new CaptureSequence(
+                                duration < 0 ? settings.ExposureTime : duration,
+                                isImageTypeValid(imageType) ? imageType.ToUpper() : CaptureSequence.ImageTypes.SNAPSHOT,
+                                AdvancedAPI.Controls.FilterWheel.GetInfo().SelectedFilter,
+                                new BinningMode(cam.GetInfo().BinX, cam.GetInfo().BinY),
+                                1);
+
+                            if (!HttpContext.IsParameterOmitted(nameof(gain)) && gain >= 0)
+                            {
+                                sequence.Gain = gain;
+                            }
+
+                            exposure = await AdvancedAPI.Controls.Imaging.CaptureImage(
+                                sequence,
+                                CancellationToken.None,
+                                AdvancedAPI.Controls.StatusMediator.GetStatus(),
+                                string.IsNullOrEmpty(targetName) ? "Snapshot" : targetName
+                            );
+                        }
+                        finally
+                        {
+                            lock (CaptureStartLock)
+                            {
+                                captureExposing = false;
+                            }
                         }
 
                         PrepareImageParameters parameters = new PrepareImageParameters(autoStretch: !skipAutoStretch);
-                        IExposureData exposure = await AdvancedAPI.Controls.Imaging.CaptureImage(
-                            sequence,
-                            CancellationToken.None,
-                            AdvancedAPI.Controls.StatusMediator.GetStatus(),
-                            string.IsNullOrEmpty(targetName) ? "Snapshot" : targetName
-                        );
                         IRenderedImage renderedImage = await AdvancedAPI.Controls.Imaging.PrepareImage(exposure, parameters, CancellationToken.None);
 
                         if (!onlySaveRaw)
@@ -986,16 +1013,17 @@ namespace ninaAPI.WebService.V2
                         }
                         await WebSocketV2.SendAndAddEvent("API-CAPTURE-FINISHED");
                     }, CancellationToken.None);
+                    CaptureTask = started;
 
                     response.Response = "Capture started";
 
                     if (onlyAwaitCaptureCompletion)
                     {
-                        while (!CaptureTask.IsCompleted && !cam.GetInfo().IsExposing)
+                        while (!started.IsCompleted && !cam.GetInfo().IsExposing)
                         {
                             await Task.Delay(10);
                         }
-                        while (!CaptureTask.IsCompleted && cam.GetInfo().IsExposing)
+                        while (!started.IsCompleted && cam.GetInfo().IsExposing)
                         {
                             await Task.Delay(10);
                         }
@@ -1004,7 +1032,20 @@ namespace ninaAPI.WebService.V2
 
                     if (waitForResult)
                     {
-                        await CaptureTask;
+                        try
+                        {
+                            await started;
+                        }
+                        catch (Exception ex)
+                        {
+                            // the catch-all below answered a failed capture with "Unknown error" instead of the reason
+                            Logger.Error(ex);
+                            response = CoreUtility.CreateErrorTable(new Error($"Capture failed: {ex.Message}", 500));
+                        }
+                    }
+
+                    if (waitForResult && started.IsCompletedSuccessfully)
+                    {
                         // Return the captured image
                         await CameraCapture(false, 0, true, resize, quality, size, 0, scale, stream, omitImage, false, false, targetName, false, onlySaveRaw, skipAutoStretch, imageType);
                         return;
@@ -1019,6 +1060,20 @@ namespace ninaAPI.WebService.V2
             }
 
             HttpContext.WriteToResponse(response);
+        }
+
+        private static bool TakeCameraForCapture()
+        {
+            lock (CaptureStartLock)
+            {
+                if (captureExposing)
+                {
+                    return false;
+                }
+
+                captureExposing = true;
+                return true;
+            }
         }
 
         private bool isImageTypeValid(string imageType)
