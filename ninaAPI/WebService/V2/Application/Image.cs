@@ -940,7 +940,9 @@ namespace ninaAPI.WebService.V2
                 CaptureSolverParameter solverParameter = new CaptureSolverParameter()
                 {
                     Attempts = 1,
-                    Binning = settings.Binning,
+                    // the binning the image was taken with, not the plate solve profile's: a 2x2 image solved with the
+                    // profile's 1x1 got half the image scale, and the solve failed or fell back to a slow blind solve
+                    Binning = img.RawImageData.MetaData.Camera.BinX,
                     BlindFailoverEnabled = settings.BlindFailoverEnabled,
                     Coordinates = coordinates,
                     DownSampleFactor = settings.DownSampleFactor,
