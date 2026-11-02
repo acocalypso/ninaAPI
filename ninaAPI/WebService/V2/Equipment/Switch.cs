@@ -79,24 +79,45 @@ namespace ninaAPI.WebService.V2
         }
 
         [Route(HttpVerbs.Get, "/equipment/switch/set")]
-        public void SwitchSet([QueryField] short index, [QueryField] double value)
+        public async Task SwitchSet([QueryField] short index, [QueryField] double value)
         {
             HttpResponse response = new HttpResponse();
 
             try
             {
                 ISwitchMediator sw = AdvancedAPI.Controls.Switch;
+                var info = sw.GetInfo();
 
-                if (!sw.GetInfo().Connected)
+                if (!info.Connected)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Switch not connected", 409));
+                }
+                else if (index < 0 || index >= (info.WritableSwitches?.Count ?? 0))
+                {
+                    // The switch VM only logs an unknown index, and the answer said "updated"
+                    response = CoreUtility.CreateErrorTable(new Error($"No writable switch at index {index}", 404));
                 }
                 else
                 {
                     SwitchToken?.Cancel();
                     SwitchToken = new CancellationTokenSource();
-                    sw.SetSwitchValue(index, value, AdvancedAPI.Controls.StatusMediator.GetStatus(), SwitchToken.Token);
-                    response.Response = "Switch value updated";
+                    try
+                    {
+                        await sw.SetSwitchValue(index, value, AdvancedAPI.Controls.StatusMediator.GetStatus(), SwitchToken.Token);
+                        response.Response = "Switch value updated";
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        response.Response = "Switch value change replaced by a newer one";
+                    }
+                    catch (Exception ex)
+                    {
+                        // A failed write answered "updated" before, since the write wasn't awaited
+                        Logger.Error(ex);
+                        response.Success = false;
+                        response.Response = "Switch value not updated";
+                        response.Error = ex.Message;
+                    }
                 }
             }
             catch (Exception ex)

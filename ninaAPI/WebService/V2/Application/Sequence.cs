@@ -557,8 +557,16 @@ namespace ninaAPI.WebService.V2
                     }
                     else if (item is SetSwitchValue i15)
                     {
+                        // Index is what /equipment/switch/set takes: the switch's position among the writable
+                        // switches. It was the switch's Id, which INDI switch hubs derive from the property and
+                        // element name (1000 and up), so a client setting a step's switch hit no switch.
+                        var writable = AdvancedAPI.Controls.Switch.GetInfo()?.WritableSwitches;
+                        var selected = i15.SelectedSwitch;
                         it.Add("Value", i15.Value);
-                        it.Add("Index", i15.SelectedSwitch.Id);
+                        it.Add("Index", selected == null || writable == null
+                            ? -1
+                            : writable.ToList().FindIndex(s => ReferenceEquals(s, selected) || s.Id == selected.Id));
+                        it.Add("SwitchId", selected?.Id);
                     }
                     else if (item is SetTracking i16)
                     {
