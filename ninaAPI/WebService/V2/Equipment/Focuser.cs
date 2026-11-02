@@ -91,6 +91,11 @@ namespace ninaAPI.WebService.V2
     {
         private static CancellationTokenSource AutoFocusToken;
 
+        // the API's autofocus run until it has ended, its cleanup included: a second start cancelled the run and began a
+        // new one at once, while the old one was still moving the focuser back
+        private static Task AutoFocusTask;
+        private static readonly object AutoFocusStartLock = new();
+
         [Route(HttpVerbs.Get, "/equipment/focuser/info")]
         public void FocuserInfo()
         {
@@ -263,35 +268,55 @@ namespace ninaAPI.WebService.V2
             try
             {
                 IFocuserMediator focuser = AdvancedAPI.Controls.Focuser;
-                if (!focuser.GetInfo().Connected)
-                {
-                    response = CoreUtility.CreateErrorTable(new Error("Focuser not connected", 409));
-                }
                 if (cancel)
                 {
                     AutoFocusToken?.Cancel();
                     response.Response = "Autofocus canceled";
                 }
+                else if (!focuser.GetInfo().Connected)
+                {
+                    // the start went on after this answer was set, and the run failed on the missing focuser
+                    response = CoreUtility.CreateErrorTable(new Error("Focuser not connected", 409));
+                }
                 else
                 {
-                    AutoFocusToken?.Cancel();
-                    AutoFocusToken = new CancellationTokenSource();
-
-                    var service = AdvancedAPI.Controls.WindowFactory.Create();
-
-                    var autofocus = AdvancedAPI.Controls.AutoFocusFactory.Create();
-                    service.Show(autofocus, Loc.Instance["LblAutoFocus"], System.Windows.ResizeMode.CanResize, System.Windows.WindowStyle.ToolWindow);
-
-                    autofocus.StartAutoFocus(
-                        AdvancedAPI.Controls.FilterWheel.GetInfo().SelectedFilter,
-                        AutoFocusToken.Token,
-                        AdvancedAPI.Controls.StatusMediator.GetStatus()
-                    ).ContinueWith(result =>
+                    lock (AutoFocusStartLock)
                     {
-                        AdvancedAPI.Controls.ImageHistory.AppendAutoFocusPoint(result.Result);
-                        service.DelayedClose(TimeSpan.FromSeconds(10));
-                    });
-                    response.Response = "Autofocus started";
+                        if (AutoFocusTask is { IsCompleted: false })
+                        {
+                            response = CoreUtility.CreateErrorTable(new Error("Autofocus already running", 409));
+                        }
+                        else
+                        {
+                            AutoFocusToken = new CancellationTokenSource();
+
+                            var service = AdvancedAPI.Controls.WindowFactory.Create();
+
+                            var autofocus = AdvancedAPI.Controls.AutoFocusFactory.Create();
+                            service.Show(autofocus, Loc.Instance["LblAutoFocus"], System.Windows.ResizeMode.CanResize, System.Windows.WindowStyle.ToolWindow);
+
+                            AutoFocusTask = autofocus.StartAutoFocus(
+                                AdvancedAPI.Controls.FilterWheel.GetInfo().SelectedFilter,
+                                AutoFocusToken.Token,
+                                AdvancedAPI.Controls.StatusMediator.GetStatus()
+                            ).ContinueWith(result =>
+                            {
+                                // result.Result threw for a failed or cancelled run: the window stayed open and the
+                                // exception went unobserved
+                                if (result.IsCompletedSuccessfully)
+                                {
+                                    AdvancedAPI.Controls.ImageHistory.AppendAutoFocusPoint(result.Result);
+                                }
+                                else if (result.IsFaulted)
+                                {
+                                    Logger.Error(result.Exception.GetBaseException());
+                                }
+
+                                service.DelayedClose(TimeSpan.FromSeconds(10));
+                            }, TaskScheduler.Default);
+                            response.Response = "Autofocus started";
+                        }
+                    }
                 }
             }
             catch (Exception ex)
