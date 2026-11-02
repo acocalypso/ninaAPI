@@ -411,9 +411,21 @@ namespace ninaAPI.WebService.V2
                     {
                         if (waitForResult)
                         {
-                            bool result = await mount.SlewToCoordinatesAsync(new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000), CancellationToken.None);
-                            response.Success = result;
-                            response.Response = result ? "Slew finished" : "Slew failed";
+                            try
+                            {
+                                bool result = await mount.SlewToCoordinatesAsync(new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000), CancellationToken.None);
+                                response.Success = result;
+                                response.Response = result ? "Slew finished" : "Slew failed";
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                // pins' INDI and OnStepX mounts throw on a refused or timed out slew; the catch-all
+                                // below answered that with "Unknown error" instead of the reason
+                                Logger.Error(ex);
+                                response.Success = false;
+                                response.Response = "Slew failed";
+                                response.Error = ex.Message;
+                            }
                         }
                         else
                         {

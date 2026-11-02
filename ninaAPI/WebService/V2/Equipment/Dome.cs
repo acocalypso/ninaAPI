@@ -129,6 +129,23 @@ namespace ninaAPI.WebService.V2
         private static bool ShutterClosing(IDomeMediator dome) =>
             CloseTask is { IsCompleted: false } || dome.GetInfo().ShutterStatus == ShutterState.ShutterClosing;
 
+        // The shutter moves run in the background, so the request has long been answered when one fails (the driver
+        // reports a failure, or no end within its timeout). DomeVM logs and notifies its own refusals, but a driver's
+        // failure ends the task with an exception nobody looked at: no log, no event, and the app stayed on "opening"
+        // or "closing". A cancelled move (stop, or another open or close) is no failure.
+        private static void ReportShutterFailure(Task move, string what)
+        {
+            _ = move.ContinueWith(t =>
+            {
+                var error = t.Exception?.GetBaseException().Message ?? "unknown error";
+                Logger.Error($"Dome shutter {what} failed: {error}");
+                _ = WebSocketV2.SendAndAddEvent("DOME-SHUTTER-FAILED", new Dictionary<string, object>() {
+                    { "Action", what },
+                    { "Error", error }
+                });
+            }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+        }
+
 
         [Route(HttpVerbs.Get, "/equipment/dome/info")]
         public void DomeInfo()
@@ -177,7 +194,7 @@ namespace ninaAPI.WebService.V2
                 {
                     ShutterToken?.Cancel();
                     ShutterToken = new CancellationTokenSource();
-                    dome.OpenShutter(ShutterToken.Token);
+                    ReportShutterFailure(dome.OpenShutter(ShutterToken.Token), "opening");
                     response.Response = "Shutter opening";
                 }
             }
@@ -212,6 +229,7 @@ namespace ninaAPI.WebService.V2
                     ShutterToken?.Cancel();
                     ShutterToken = new CancellationTokenSource();
                     CloseTask = dome.CloseShutter(ShutterToken.Token);
+                    ReportShutterFailure(CloseTask, "closing");
                     response.Response = "Shutter closing";
                 }
             }
