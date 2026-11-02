@@ -263,6 +263,15 @@ namespace ninaAPI.WebService.V2
             return endpoint == CameraEndpoint.Guide && !endpoint.Mediator.IsFreeToCapture(guideCameraCaptureOwner);
         }
 
+        /// <summary>
+        /// pins: true while the camera exposes. Binning or readout mode changed under a running exposure (e.g. a frame of a
+        /// sequence) ruins the frame: the driver reads it out with the new geometry or mode.
+        /// </summary>
+        private static bool CameraExposing(CameraEndpoint endpoint)
+        {
+            return endpoint.Mediator.GetInfo().IsExposing;
+        }
+
         /// <summary>pins: the device settings that break a running guide frame, refused by set-setting like set-binning and set-readout.</summary>
         private static readonly HashSet<string> SettingsThatBreakAGuideFrame = new(StringComparer.Ordinal) { "BinX", "BinY", "ReadoutMode" };
 
@@ -283,6 +292,12 @@ namespace ninaAPI.WebService.V2
             if (GuideCameraInUseByGuider(endpoint))
             {
                 HttpContext.WriteToResponse(CoreUtility.CreateErrorTable(new Error($"{endpoint.Name} is in use by the guider", 409)));
+                return;
+            }
+
+            if (CameraExposing(endpoint))
+            {
+                HttpContext.WriteToResponse(CoreUtility.CreateErrorTable(new Error($"{endpoint.Name} is exposing", 409)));
                 return;
             }
 
@@ -663,6 +678,12 @@ namespace ninaAPI.WebService.V2
             if (GuideCameraInUseByGuider(endpoint))
             {
                 HttpContext.WriteToResponse(CoreUtility.CreateErrorTable(new Error($"{endpoint.Name} is in use by the guider", 409)));
+                return;
+            }
+
+            if (CameraExposing(endpoint))
+            {
+                HttpContext.WriteToResponse(CoreUtility.CreateErrorTable(new Error($"{endpoint.Name} is exposing", 409)));
                 return;
             }
 
@@ -1188,6 +1209,10 @@ namespace ninaAPI.WebService.V2
                         else if (SettingsThatBreakAGuideFrame.Contains(prop.Name) && GuideCameraInUseByGuider(endpoint))
                         {
                             response = CoreUtility.CreateErrorTable(new Error($"{endpoint.Name} is in use by the guider", 409));
+                        }
+                        else if (SettingsThatBreakAGuideFrame.Contains(prop.Name) && CameraExposing(endpoint))
+                        {
+                            response = CoreUtility.CreateErrorTable(new Error($"{endpoint.Name} is exposing", 409));
                         }
                         else
                         {
