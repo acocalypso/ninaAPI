@@ -25,6 +25,7 @@
 using EmbedIO.WebSockets;
 using NINA.Core.Locale;
 using NINA.Core.Model.Equipment;
+using NINA.Core.SignalR;
 using NINA.Core.Utility;
 using NINA.Equipment.Interfaces;
 using NINA.Equipment.Interfaces.ViewModel;
@@ -34,6 +35,7 @@ using System.ComponentModel.Composition;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Windows;
 
 namespace ninaAPI.WebService.V2.CustomDrivers
 {
@@ -98,12 +100,25 @@ namespace ninaAPI.WebService.V2.CustomDrivers
                 TokenSource = new CancellationTokenSource();
                 TargetFilter = this.Filters[value].Name;
                 FilterChangeRequested?.Invoke(this, TargetFilter);
-                CustomMessageBox.Show(
-                    string.Format(Loc.Instance["LblPleaseChangeToFilter"], TargetFilter),
-                    Loc.Instance["LblFilterChangeRequired"],
-                    System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxResult.OK,
-                    TokenSource.Token).Wait();
+                var text = string.Format(Loc.Instance["LblPleaseChangeToFilter"], TargetFilter);
+                var caption = Loc.Instance["LblFilterChangeRequired"];
+                if (MyMessageBoxBroadcaster.Instance != null)
+                {
+                    // headless the prompt goes to the app, which shows NINA's message boxes: CustomMessageBox needs the
+                    // main window and threw on every filter change. No time limit, so a sequence doesn't go on with the
+                    // wrong filter; "filter-changed" on the socket ends it as well
+                    MyMessageBoxBroadcaster.Instance.ShowMessageBoxAsync(
+                        text,
+                        caption,
+                        MessageBoxButton.OK,
+                        MessageBoxResult.OK,
+                        Timeout.InfiniteTimeSpan,
+                        TokenSource.Token).Wait();
+                }
+                else
+                {
+                    CustomMessageBox.Show(text, caption, MessageBoxButton.OK, MessageBoxResult.OK, TokenSource.Token).Wait();
+                }
                 TargetFilter = string.Empty;
                 FilterChangeRequested?.Invoke(this, TargetFilter);
                 position = value;

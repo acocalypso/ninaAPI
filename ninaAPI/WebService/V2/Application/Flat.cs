@@ -193,11 +193,15 @@ namespace ninaAPI.WebService.V2
                                 await flats.Execute(progress, token);
                                 if (!token.IsCancellationRequested)
                                 {
+                                    // waits for the user: after 5 min it answered OK on its own, and the dark flats were
+                                    // taken with the scope open; cancelling the flat run ends it
                                     var result = await MyMessageBoxBroadcaster.Instance.ShowMessageBoxAsync(
                                         Loc.Instance["LblCoverScopeMsgBox"],
                                         Loc.Instance["LblCoverScopeMsgBoxTitle"],
                                         MessageBoxButton.OKCancel,
-                                        MessageBoxResult.OK);
+                                        MessageBoxResult.OK,
+                                        Timeout.InfiniteTimeSpan,
+                                        token);
                                     if (result != MessageBoxResult.OK || token.IsCancellationRequested)
                                         return;
 
@@ -336,11 +340,15 @@ namespace ninaAPI.WebService.V2
                                 await flats.Execute(progress, token);
                                 if (!token.IsCancellationRequested)
                                 {
+                                    // waits for the user: after 5 min it answered OK on its own, and the dark flats were
+                                    // taken with the scope open; cancelling the flat run ends it
                                     var result = await MyMessageBoxBroadcaster.Instance.ShowMessageBoxAsync(
                                         Loc.Instance["LblCoverScopeMsgBox"],
                                         Loc.Instance["LblCoverScopeMsgBoxTitle"],
                                         MessageBoxButton.OKCancel,
-                                        MessageBoxResult.OK);
+                                        MessageBoxResult.OK,
+                                        Timeout.InfiniteTimeSpan,
+                                        token);
                                     if (result != MessageBoxResult.OK || token.IsCancellationRequested)
                                         return;
 
@@ -473,11 +481,15 @@ namespace ninaAPI.WebService.V2
                                 await flats.Execute(progress, token);
                                 if (!token.IsCancellationRequested)
                                 {
+                                    // waits for the user: after 5 min it answered OK on its own, and the dark flats were
+                                    // taken with the scope open; cancelling the flat run ends it
                                     var result = await MyMessageBoxBroadcaster.Instance.ShowMessageBoxAsync(
                                         Loc.Instance["LblCoverScopeMsgBox"],
                                         Loc.Instance["LblCoverScopeMsgBoxTitle"],
                                         MessageBoxButton.OKCancel,
-                                        MessageBoxResult.OK);
+                                        MessageBoxResult.OK,
+                                        Timeout.InfiniteTimeSpan,
+                                        token);
                                     if (result != MessageBoxResult.OK || token.IsCancellationRequested)
                                         return;
 
