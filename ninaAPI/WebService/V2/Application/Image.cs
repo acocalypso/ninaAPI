@@ -203,7 +203,10 @@ namespace ninaAPI.WebService.V2
             }
         }
 
-        private static void CacheThumbnail(ImageSavedEventArgs e)
+        // Keyed by the image's position in Images: a thumbnail that was skipped (no rendered image, a failed write)
+        // shifted every later key by one when they were counted, so /image/thumbnail/{i} served another image's
+        // thumbnail for the rest of the session and none for the newest.
+        private static void CacheThumbnail(ImageSavedEventArgs e, ImageResponse image)
         {
             if (!Properties.Settings.Default.CreateThumbnails)
                 return;
@@ -214,9 +217,15 @@ namespace ninaAPI.WebService.V2
             }
             lock (imageLock)
             {
+                int index = Images.IndexOf(image);
+                if (index < 0)
+                {
+                    return;
+                }
+
                 string thumbnailFile = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location), $"thumbnails-{Environment.ProcessId}");
                 Directory.CreateDirectory(thumbnailFile);
-                thumbnailFile = Path.Combine(thumbnailFile, $"{Images.Count - 1}.jpg");
+                thumbnailFile = Path.Combine(thumbnailFile, $"{index}.jpg");
                 var img = BitmapHelper.ScaleBitmap(e.Image, 256 / e.Image.Width);
 
                 JpegBitmapEncoder encoder = new JpegBitmapEncoder();
@@ -228,7 +237,7 @@ namespace ninaAPI.WebService.V2
                     encoder.Save(fs);
                 }
 
-                Thumbnails.Add(new KeyValuePair<int, string>(Thumbnails.Count, thumbnailFile));
+                Thumbnails.Add(new KeyValuePair<int, string>(index, thumbnailFile));
             }
         }
 
@@ -254,7 +263,7 @@ namespace ninaAPI.WebService.V2
                 // A thumbnail that can't be written (full or read-only storage) must not cost the event.
                 try
                 {
-                    CacheThumbnail(e);
+                    CacheThumbnail(e, r);
                 }
                 catch (Exception ex)
                 {
@@ -1127,7 +1136,14 @@ namespace ninaAPI.WebService.V2
                         }
 
                         var i = ImageWatcher.Images.IndexOf(image);
-                        res = ImageWatcher.Thumbnails.Where(x => x.Key == i).First().Value;
+                        res = ImageWatcher.Thumbnails.Where(x => x.Key == i).Select(x => x.Value).FirstOrDefault();
+                        if (res == null)
+                        {
+                            response = CoreUtility.CreateErrorTable(new Error("No thumbnail for this image", 404));
+                            HttpContext.WriteToResponse(response);
+                            return;
+                        }
+
                         HttpContext.Response.ContentType = "image/jpeg";
                     }
 
