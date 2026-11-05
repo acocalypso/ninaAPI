@@ -120,12 +120,19 @@ namespace ninaAPI.WebService.V2
                 TempChangeRunning = cam.TempChangeRunning,
                 TargetTemp = cam.TargetTemp,
                 // Exact equality of temperature and set point almost never held, and it held mid-ramp. NINA's own
-                // AtTargetTemp compares with the target set at connect, which /cool does not update.
-                AtTargetTemp = cam.GetInfo().CoolerOn
-                    && !cam.TempChangeRunning
-                    && Math.Abs(cam.GetInfo().Temperature - cam.GetInfo().TemperatureSetPoint) <= 2,
+                // AtTargetTemp compares with the target set at connect, which /cool does not update. 1 °C is what NINA's
+                // cooling counts as reached (CameraVM.RegulateTemperature); a regulated cooler holds well within it.
+                AtTargetTemp = AtTargetTemperature(cam.GetInfo(), cam.TempChangeRunning),
             };
         }
+        // one snapshot of the camera info for all three values
+        private static bool AtTargetTemperature(CameraInfo info, bool tempChangeRunning)
+        {
+            return info.CoolerOn
+                && !tempChangeRunning
+                && Math.Abs(info.Temperature - info.TemperatureSetPoint) <= 1;
+        }
+
         public double TargetTemp { get; set; }
         public bool AtTargetTemp { get; set; }
     }
