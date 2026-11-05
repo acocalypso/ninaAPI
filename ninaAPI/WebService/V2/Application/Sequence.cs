@@ -145,11 +145,11 @@ namespace ninaAPI.WebService.V2
             }
             catch (Exception ex)
             {
+                // the error was never written: the client got an empty 200 it could not parse
                 Logger.Error(ex);
                 response = CoreUtility.CreateErrorTable(CommonErrors.UNKNOWN_ERROR);
+                HttpContext.WriteToResponse(response);
             }
-
-
         }
 
         [Route(HttpVerbs.Get, "/sequence/edit")]
@@ -708,6 +708,11 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Sequence is not initialized", 409));
                 }
+                else if (sequence.IsAdvancedSequenceRunning())
+                {
+                    // resetting the progress of a running sequence sets its items back to "not run" under it
+                    response = CoreUtility.CreateErrorTable(new Error("Sequence is running", 409));
+                }
                 else
                 {
                     ISequenceRootContainer root = sequence.GetSequenceRoot();
@@ -845,20 +850,7 @@ namespace ninaAPI.WebService.V2
                 string sequenceFolder = profile.SequenceSettings.DefaultSequenceFolder;
 
                 List<string> f = [];
-
-                string[] files = CoreUtility.GetFilesRecursively(sequenceFolder);
-                foreach (string file in files)
-                {
-                    if (file.EndsWith(".json"))
-                    {
-                        string cleaned = file.Replace(sequenceFolder, "").Replace("\\", "/").Replace(".json", "");
-                        if (cleaned.StartsWith('/'))
-                        {
-                            cleaned = cleaned[1..];
-                        }
-                        f.Add(cleaned);
-                    }
-                }
+                AddAvailableSequences(sequenceFolder, sequenceFolder, f);
 
                 response.Response = f;
             }
@@ -869,6 +861,56 @@ namespace ninaAPI.WebService.V2
             }
 
             HttpContext.WriteToResponse(response);
+        }
+
+        /// <summary>
+        /// pins: the sequences under <paramref name="folder"/>, as names /sequence/load takes (relative, '/', no ".json").
+        /// Every .json was listed: the default sequence folder (Documents/N.I.N.A) also holds the templates, the targets,
+        /// the images and the autofocus reports, over a thousand files that are no sequence. Only a file whose JSON is a
+        /// sequence root container is listed now. An unreadable folder no longer fails the whole list, and a symbolic
+        /// link to a folder is not followed (a link to a parent recursed until the stack overflowed and ended NINA).
+        /// </summary>
+        private static void AddAvailableSequences(string root, string folder, List<string> found)
+        {
+            try
+            {
+                foreach (string file in Directory.GetFiles(folder))
+                {
+                    if (file.EndsWith(".json") && IsSequenceFile(file))
+                    {
+                        string relative = Path.GetRelativePath(root, file).Replace('\\', '/');
+                        found.Add(relative[..^".json".Length]);
+                    }
+                }
+
+                foreach (string dir in Directory.GetDirectories(folder))
+                {
+                    if (new DirectoryInfo(dir).LinkTarget == null)
+                    {
+                        AddAvailableSequences(root, dir, found);
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                Logger.Warning($"Sequence list: skipping {folder}: {ex.Message}");
+            }
+        }
+
+        // a NINA sequence file starts with its root container's type, templates and targets with other containers
+        private static bool IsSequenceFile(string file)
+        {
+            try
+            {
+                using var reader = new StreamReader(file);
+                var head = new char[1024];
+                int read = reader.ReadBlock(head, 0, head.Length);
+                return new string(head, 0, read).Contains("NINA.Sequencer.Container.SequenceRootContainer");
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                return false;
+            }
         }
 
         [Route(HttpVerbs.Get, "/sequence/set-target")]
