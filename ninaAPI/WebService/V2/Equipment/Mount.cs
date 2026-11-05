@@ -16,6 +16,7 @@ using EmbedIO.WebSockets;
 using Newtonsoft.Json;
 using NINA.Astrometry;
 using NINA.Core.Enum;
+using NINA.Core.Model;
 using NINA.Core.Utility;
 using NINA.Equipment.Equipment.MyTelescope;
 using NINA.Equipment.Interfaces;
@@ -365,62 +366,73 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Mount parked", 409));
                 }
-                else
+                else if (rotate || center)
                 {
+                    // Execute directly: only Run() sets Status (a center that worked answered "Slew failed"), and Run()
+                    // swallows the reason of a failure (it answered a generic "Unknown error"). The instructions'
+                    // validation checks the ranges of their expressions, so the angles are normalized first.
+                    IList<string> issues;
+                    Func<IProgress<ApplicationStatus>, CancellationToken, Task> execute;
+                    var coordinates = new Coordinates(Angle.ByDegree(AstroUtil.EuclidianModulus(ra, 360)), Angle.ByDegree(dec), Epoch.J2000);
                     if (rotate)
                     {
                         CenterAndRotate cr = new CenterAndRotate(AdvancedAPI.Controls.Profile, mount, AdvancedAPI.Controls.Imaging, AdvancedAPI.Controls.Rotator, AdvancedAPI.Controls.FilterWheel, AdvancedAPI.Controls.Guider, AdvancedAPI.Controls.Dome, AdvancedAPI.Controls.DomeFollower, AdvancedAPI.Controls.PlateSolver, AdvancedAPI.Controls.WindowFactory);
-                        cr.Coordinates.Coordinates = new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000);
-                        cr.PositionAngle = rotationAngle;
+                        cr.Coordinates.Coordinates = coordinates;
+                        cr.PositionAngle = AstroUtil.EuclidianModulus(rotationAngle, 360);
 
-                        SlewCenterToken?.Cancel();
-                        SlewCenterToken = new CancellationTokenSource();
-                        if (waitForResult)
-                        {
-                            await cr.Execute(AdvancedAPI.Controls.StatusMediator.GetStatus(), SlewCenterToken.Token);
-                            response.Success = cr.Status == SequenceEntityStatus.FINISHED;
-                            response.Response = response.Success ? "Slew finished" : "Slew failed";
-                        }
-                        else
-                        {
-                            cr.Execute(AdvancedAPI.Controls.StatusMediator.GetStatus(), SlewCenterToken.Token);
-                            response.Response = "Slew started";
-                        }
-                    }
-                    else if (center)
-                    {
-                        Center instruction = new Center(AdvancedAPI.Controls.Profile, mount, AdvancedAPI.Controls.Imaging, AdvancedAPI.Controls.FilterWheel, AdvancedAPI.Controls.Guider, AdvancedAPI.Controls.Dome, AdvancedAPI.Controls.DomeFollower, AdvancedAPI.Controls.PlateSolver, AdvancedAPI.Controls.WindowFactory);
-                        instruction.Coordinates.Coordinates = new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000);
-
-                        SlewCenterToken?.Cancel();
-                        SlewCenterToken = new CancellationTokenSource();
-                        Logger.Info(JsonConvert.SerializeObject(instruction.Coordinates.Coordinates));
-                        if (waitForResult)
-                        {
-                            await instruction.Execute(AdvancedAPI.Controls.StatusMediator.GetStatus(), SlewCenterToken.Token);
-                            response.Success = instruction.Status == SequenceEntityStatus.FINISHED;
-                            response.Response = response.Success ? "Slew finished" : "Slew failed";
-                        }
-                        else
-                        {
-                            instruction.Execute(AdvancedAPI.Controls.StatusMediator.GetStatus(), SlewCenterToken.Token);
-                            response.Response = "Slew started";
-                        }
+                        // CenterAndRotate.Validate hides Center.Validate (new) and adds the rotator check
+                        cr.Validate();
+                        issues = cr.Issues;
+                        execute = cr.Execute;
                     }
                     else
                     {
-                        if (waitForResult)
+                        Center instruction = new Center(AdvancedAPI.Controls.Profile, mount, AdvancedAPI.Controls.Imaging, AdvancedAPI.Controls.FilterWheel, AdvancedAPI.Controls.Guider, AdvancedAPI.Controls.Dome, AdvancedAPI.Controls.DomeFollower, AdvancedAPI.Controls.PlateSolver, AdvancedAPI.Controls.WindowFactory);
+                        instruction.Coordinates.Coordinates = coordinates;
+                        Logger.Info(JsonConvert.SerializeObject(instruction.Coordinates.Coordinates));
+
+                        instruction.Validate();
+                        issues = instruction.Issues;
+                        execute = instruction.Execute;
+                    }
+
+                    if (!AdvancedAPI.Controls.Camera.GetInfo().Connected)
+                    {
+                        // the instructions' validation does not check the camera; their failure then only named the exception type
+                        response = CoreUtility.CreateErrorTable(new Error("Camera not connected", 409));
+                    }
+                    else if (issues.Count > 0)
+                    {
+                        response = CoreUtility.CreateErrorTable(new Error(string.Join(", ", issues), 409));
+                    }
+                    else
+                    {
+                        var cts = await TakeOverSlewAsync();
+                        IProgress<ApplicationStatus> progress = AdvancedAPI.Controls.StatusMediator.GetStatus();
+                        Task centerTask = StartLatest(async token =>
+                        {
+                            await execute(progress, token);
+                            return true;
+                        }, cts);
+                        if (centerTask == null)
+                        {
+                            response.Success = false;
+                            response.Response = "Slew cancelled";
+                        }
+                        else if (waitForResult)
                         {
                             try
                             {
-                                bool result = await mount.SlewToCoordinatesAsync(new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000), CancellationToken.None);
-                                response.Success = result;
-                                response.Response = result ? "Slew finished" : "Slew failed";
+                                await centerTask;
+                                response.Response = "Slew finished";
                             }
-                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            catch (OperationCanceledException) when (cts.IsCancellationRequested)
                             {
-                                // pins' INDI and OnStepX mounts throw on a refused or timed out slew; the catch-all
-                                // below answered that with "Unknown error" instead of the reason
+                                response.Success = false;
+                                response.Response = "Slew cancelled";
+                            }
+                            catch (Exception ex)
+                            {
                                 Logger.Error(ex);
                                 response.Success = false;
                                 response.Response = "Slew failed";
@@ -429,9 +441,52 @@ namespace ninaAPI.WebService.V2
                         }
                         else
                         {
-                            mount.SlewToCoordinatesAsync(new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000), CancellationToken.None);
+                            // a center cancelled by a stop or a newer request ends as cancelled, which sends no event
+                            BackgroundOperation.Report(centerTask, "MOUNT-CENTER-FAILED", "Mount slew and center");
                             response.Response = "Slew started";
                         }
+                    }
+                }
+                else
+                {
+                    // also with the latest request's token: a stop or a newer request cancels a slew that NINA holds back
+                    // until a previous one has ended ("waiting for the prior slew")
+                    var cts = await TakeOverSlewAsync();
+                    var coordinates = new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000);
+                    Task<bool> slew = StartLatest(token => mount.SlewToCoordinatesAsync(coordinates, token), cts);
+                    if (slew == null)
+                    {
+                        // a stop or a newer request came while waiting for the previous slew or center to end
+                        response.Success = false;
+                        response.Response = "Slew cancelled";
+                    }
+                    else if (waitForResult)
+                    {
+                        try
+                        {
+                            bool result = await slew;
+                            response.Success = result;
+                            response.Response = result ? "Slew finished" : "Slew failed";
+                        }
+                        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+                        {
+                            response.Success = false;
+                            response.Response = "Slew cancelled";
+                        }
+                        catch (Exception ex)
+                        {
+                            // pins' INDI and OnStepX mounts throw on a refused or timed out slew; the catch-all
+                            // below answered that with "Unknown error" instead of the reason
+                            Logger.Error(ex);
+                            response.Success = false;
+                            response.Response = "Slew failed";
+                            response.Error = ex.Message;
+                        }
+                    }
+                    else
+                    {
+                        BackgroundOperation.Report(slew, "MOUNT-SLEW-FAILED", "Mount slew");
+                        response.Response = "Slew started";
                     }
                 }
             }
@@ -444,7 +499,77 @@ namespace ninaAPI.WebService.V2
             HttpContext.WriteToResponse(response);
         }
 
+        // The latest slew or center request owns SlewCenterToken; the slew or center it started is SlewCenterTask.
+        private static readonly object SlewGate = new object();
         private static CancellationTokenSource SlewCenterToken;
+        private static Task SlewCenterTask = Task.CompletedTask;
+
+        /// <summary>
+        /// Makes this request the latest slew or center: cancels the previous one (also one still waiting here) and waits
+        /// up to 10 s until its slew or center has ended, because the driver aborts the cancelled slew after the cancellation and
+        /// that abort stopped the slew started right after it. The token returned is cancelled when a stop or a newer
+        /// request came in the meantime; the caller then starts nothing.
+        /// </summary>
+        private static async Task<CancellationTokenSource> TakeOverSlewAsync()
+        {
+            var cts = new CancellationTokenSource();
+            CancellationTokenSource previous;
+            Task running;
+            lock (SlewGate)
+            {
+                previous = SlewCenterToken;
+                SlewCenterToken = cts;
+                running = SlewCenterTask;
+            }
+
+            previous?.Cancel();
+            if (!running.IsCompleted)
+            {
+                try
+                {
+                    await running.WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (TimeoutException)
+                {
+                    Logger.Warning("The cancelled slew or center did not end within 10 s; the next one starts anyway");
+                }
+                catch (Exception)
+                {
+                    // cancelled or failed, reported by its own request
+                }
+            }
+
+            return cts;
+        }
+
+        /// <summary>
+        /// Starts the slew or center unless <paramref name="cts"/> was cancelled while waiting (null then). A failure after
+        /// a stop or a newer request (the aborted slew fails a center) ends the task as cancelled, not failed.
+        /// </summary>
+        private static Task<bool> StartLatest(Func<CancellationToken, Task<bool>> run, CancellationTokenSource cts)
+        {
+            lock (SlewGate)
+            {
+                if (cts.IsCancellationRequested)
+                {
+                    return null;
+                }
+
+                Task<bool> task = Task.Run(async () =>
+                {
+                    try
+                    {
+                        return await run(cts.Token);
+                    }
+                    catch (Exception) when (cts.IsCancellationRequested)
+                    {
+                        throw new OperationCanceledException(cts.Token);
+                    }
+                });
+                SlewCenterTask = task;
+                return task;
+            }
+        }
 
         [Route(HttpVerbs.Get, "/equipment/mount/slew/stop")]
         public void MountStopSlew()
@@ -461,8 +586,9 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    mount.StopSlew();
+                    // cancelled first: a center whose slew the stop aborted reported that as a failure
                     SlewCenterToken?.Cancel();
+                    mount.StopSlew();
                     response.Response = "Stopped slew";
                 }
             }
@@ -532,8 +658,13 @@ namespace ninaAPI.WebService.V2
                 {
                     if (!HttpContext.IsParameterOmitted(nameof(ra)) && !HttpContext.IsParameterOmitted(nameof(dec)))
                     {
-                        await mount.Sync(new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000));
-                        response.Response = "Synced";
+                        bool synced = await mount.Sync(new Coordinates(Angle.ByDegree(ra), Angle.ByDegree(dec), Epoch.J2000));
+                        response.Success = synced;
+                        response.Response = synced ? "Synced" : "Sync failed";
+                        if (!synced)
+                        {
+                            response.Error = "The mount did not accept the sync (see the NINA log)";
+                        }
                     }
                     else
                     {
@@ -545,8 +676,33 @@ namespace ninaAPI.WebService.V2
                             AdvancedAPI.Controls.FilterWheel,
                             AdvancedAPI.Controls.PlateSolver,
                             AdvancedAPI.Controls.WindowFactory);
-                        await instruction.Run(AdvancedAPI.Controls.StatusMediator.GetStatus(), CancellationToken.None);
-                        response.Response = "Synced";
+
+                        // Execute directly like the center: Run() without a parent swallowed a failed solve, and the
+                        // answer was "Synced" either way
+                        instruction.Validate();
+                        if (!AdvancedAPI.Controls.Camera.GetInfo().Connected)
+                        {
+                            response = CoreUtility.CreateErrorTable(new Error("Camera not connected", 409));
+                        }
+                        else if (instruction.Issues.Count > 0)
+                        {
+                            response = CoreUtility.CreateErrorTable(new Error(string.Join(", ", instruction.Issues), 409));
+                        }
+                        else
+                        {
+                            try
+                            {
+                                await instruction.Execute(AdvancedAPI.Controls.StatusMediator.GetStatus(), CancellationToken.None);
+                                response.Response = "Synced";
+                            }
+                            catch (Exception ex)
+                            {
+                                Logger.Error(ex);
+                                response.Success = false;
+                                response.Response = "Sync failed";
+                                response.Error = ex.Message;
+                            }
+                        }
                     }
                 }
             }
