@@ -13,7 +13,7 @@ namespace ninaAPI
 
         // Pairing of the plate solve lines, see PlateSolveStarted
         private bool solveOpen;
-        private bool openSolveCanFailOver;
+        private string openSolveFailoverParameters;
         private bool resultEchoPending;
 
         public NINALogMessageProcessor()
@@ -27,36 +27,48 @@ namespace ninaAPI
 
             foreach (var line in messages)
             {
-
-                if (filterMessage(line))
+                // the watcher thread ends at the first exception, and no log event was sent after it for the rest of the session
+                try
                 {
-                    continue;
+                    processLogMessage(line);
                 }
-
-                string[] parts = line.Split('|');
-                if (parts.Length == 6)
+                catch (Exception ex)
                 {
-                    string message = parts[5];
+                    Logger.Warning($"log message could not be processed: {ex.Message}");
+                }
+            }
+        }
 
-                    foreach (Regex regex in matchers.Keys)
+        private void processLogMessage(string line)
+        {
+            if (filterMessage(line))
+            {
+                return;
+            }
+
+            // the message itself may contain '|' (e.g. a firmware "model|version"); such lines were dropped
+            string[] parts = line.Split('|', 6);
+            if (parts.Length == 6 && DateTime.TryParse(parts[0], out DateTime dateTime))
+            {
+                string message = parts[5];
+
+                foreach (Regex regex in matchers.Keys)
+                {
+                    Match match = regex.Match(message);
+                    if (match.Success)
                     {
-                        Match match = regex.Match(message);
-                        if (match.Success)
+                        EventMatcher eventMatcher = matchers[regex];
+                        NINALogEvent logEvent = eventMatcher.handleMessage(eventMatcher, message, dateTime, match);
+                        if (logEvent != null)
                         {
-                            EventMatcher eventMatcher = matchers[regex];
-                            DateTime dateTime = DateTime.Parse(parts[0]);
-                            NINALogEvent logEvent = eventMatcher.handleMessage(eventMatcher, message, dateTime, match);
-                            if (logEvent != null)
-                            {
-                                onNINALogEvent(logEvent);
-                            }
+                            onNINALogEvent(logEvent);
                         }
                     }
                 }
-                else
-                {
-                    Logger.Trace($"log message is not regular form: {line}, skipping");
-                }
+            }
+            else
+            {
+                Logger.Trace($"log message is not regular form: {line}, skipping");
             }
         }
 
@@ -107,16 +119,28 @@ namespace ninaAPI
         // failure is only logged at Debug level; the blind solve logs its start and result, and the outer
         // call then logs the same result again. Report the failure when the blind solve starts and drop
         // the repeated result, so that every PLATESOLVE-START is followed by exactly one result.
+        //
+        // Best effort: the log lines carry no id of the solve. Solves without an exposure (a prepared or
+        // saved image, a FITS file) can run while a sequence centers; a blind start is taken for the
+        // failover only when it logs the open solve's parameters without its coordinates, but one with the
+        // same parameters is still taken for it. A solve with coordinates started in between (the app's
+        // solve passes the mount position) hides the failover, and its repeated result reaches the clients.
         private NINALogEvent PlateSolveStarted(EventMatcher eventMatcher, string msg, DateTime dateTime, Match match)
         {
-            bool hasCoordinates = msg.Contains("Reference Coordinates");
-            resultEchoPending = solveOpen && openSolveCanFailOver && !hasCoordinates;
+            int coordinatesAt = msg.IndexOf("Reference Coordinates", StringComparison.Ordinal);
+            bool hasCoordinates = coordinatesAt >= 0;
+            resultEchoPending = solveOpen
+                && openSolveFailoverParameters != null
+                && !hasCoordinates
+                && msg.TrimEnd() == openSolveFailoverParameters;
             if (resultEchoPending)
             {
                 onNINALogEvent(new NINALogEvent(NINALogEvent.NINA_PLATESOLVE_FAILED, dateTime));
             }
             solveOpen = true;
-            openSolveCanFailOver = hasCoordinates && msg.Contains("BlindFailoverEnabled: True");
+            openSolveFailoverParameters = hasCoordinates && msg.Contains("BlindFailoverEnabled: True")
+                ? msg[..coordinatesAt].TrimEnd()
+                : null;
             return new NINALogEvent(eventMatcher.eventType, dateTime);
         }
 

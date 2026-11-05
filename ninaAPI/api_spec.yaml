@@ -6447,43 +6447,10 @@ paths:
       tags:
         - Application
       summary: Screenshot
-      description: Takes a screenshot
-      parameters:
-        - in: query
-          name: resize
-          description: Whether to resize the screenshot.
-          required: false
-          schema:
-            type: boolean
-        - in: query
-          name: quality
-          description: The quality of the screenshot, ranging from 1 (worst) to 100 (best). -1 or omitted for png
-          required: false
-          schema:
-            type: integer
-            format: int32
-        - in: query
-          name: size
-          description: The size of the screenshot ([width]x[height]). Requires resize to be true.
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: scale
-          description: The scale of the screenshot. Requires resize to be true.
-          required: false
-          schema:
-            type: number
-            format: double
-        - in: query
-          name: stream
-          description: Stream the image to the client. This will stream the image in image/jpg or image/png format.
-          required: false
-          schema:
-            type: boolean
+      description: Not available on PI 'N' Stars, which runs headless without a screen. Always answers with StatusCode 501.
       responses:
         "200":
-          description: Successful response
+          description: Not available (StatusCode 501 in the body)
           content:
             application/json:
               schema:
@@ -6491,35 +6458,19 @@ paths:
                 properties:
                   Response:
                     type: string
-                    example: "<base64 encoded image>"
+                    example: ""
                   Error:
                     type: string
-                    example: ""
+                    example: "Screenshots are not available on PI 'N' Stars (headless)"
                   StatusCode:
                     type: integer
-                    example: 200
+                    example: 501
                   Success:
                     type: boolean
-                    example: true
+                    example: false
                   Type:
                     type: string
                     example: "API"
-            image/png:
-              schema:
-                description: Image in png format, when stream is set to true and the image quality is not specified or set to -1
-                type: array
-                format: binary
-            image/jpg:
-              schema:
-                description: Image in jpg format, when stream is set to true and the image quality is specified
-                type: array
-                format: binary
-        "500":
-          description: Internal server error, Unknown error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UnknownError"
 
   /astro-util/moon-separation:
     get:
@@ -6973,6 +6924,8 @@ paths:
           description:
             What bayer pattern to use for debayering, if debayer is true. If this is not specified, the api will try to use the bayer pattern that is configured in the profile as its first option,
             if that is set to Auto, the api will try to use the bayer pattern reported by the camera if it is connected. The fallback value is Monochrome.
+            A profile pattern of None counts as Monochrome. Only the 2x2 bayer patterns (RGGB, RGBG, GRGB, GRBG, GBGR, GBRG, BGRG, BGGR) are debayered;
+            with any other value the image is returned as it is. An unknown value answers 400.
           required: false
           schema:
             type: string
@@ -7342,6 +7295,8 @@ paths:
           description:
             What bayer pattern to use for debayering, if debayer is true. If this is not specified, the api will try to use the bayer pattern that is configured in the profile as its first option,
             if that is set to Auto, the api will try to use the bayer pattern reported by the camera if it is connected. The fallback value is Monochrome.
+            A profile pattern of None counts as Monochrome. Only the 2x2 bayer patterns (RGGB, RGBG, GRGB, GRBG, GBGR, GBRG, BGRG, BGGR) are debayered;
+            with any other value the image is returned as it is. An unknown value answers 400.
           required: false
           schema:
             type: string

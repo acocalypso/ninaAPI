@@ -64,9 +64,10 @@ namespace ninaAPI.WebService.V2
         public string Name { get; set; }
         public int Id { get; set; }
 
+        // null for a position the profile's filter list does not know (FILTERWHEEL-CHANGED was lost then)
         public static FInfo FromFilter(FilterInfo f)
         {
-            return new FInfo() { Name = f.Name, Id = f.Position };
+            return f == null ? null : new FInfo() { Name = f.Name, Id = f.Position };
         }
     }
 

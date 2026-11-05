@@ -285,15 +285,17 @@ namespace ninaAPI.WebService.V2
             {
                 IDomeMediator dome = AdvancedAPI.Controls.Dome;
 
+                // The shutter and mount checks only apply to switching following on: after the shutter was closed
+                // it could not be switched off. A dome without shutter control reports no open shutter at all.
                 if (!dome.GetInfo().Connected)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Dome not connected", 409));
                 }
-                else if (!dome.GetInfo().ShutterStatus.Equals(ShutterState.ShutterOpen))
+                else if (enabled && dome.GetInfo().CanSetShutter && !dome.GetInfo().ShutterStatus.Equals(ShutterState.ShutterOpen))
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Dome shutter not open", 409));
                 }
-                else if (!AdvancedAPI.Controls.Mount.GetInfo().Connected)
+                else if (enabled && !AdvancedAPI.Controls.Mount.GetInfo().Connected)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Mount not connected", 409));
                 }

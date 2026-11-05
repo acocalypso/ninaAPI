@@ -12,18 +12,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
-using System.Windows.Forms;
-using System.Windows.Media.Imaging;
 using EmbedIO;
 using EmbedIO.Routing;
 using EmbedIO.WebApi;
 using NINA.Core.Utility;
-using NINA.Image.ImageAnalysis;
 using NINA.WPF.Base.Interfaces.ViewModel;
 using ninaAPI.Properties;
 using ninaAPI.Utility;
@@ -123,86 +119,12 @@ namespace ninaAPI.WebService.V2
             HttpContext.WriteToResponse(response);
         }
 
+        // PI 'N' Stars runs headless: there is no screen to capture, and the capture threw (after allocating a screen-sized
+        // bitmap) and logged a stack trace on every call
         [Route(HttpVerbs.Get, "/application/screenshot")]
-        public async Task ApplicationScreenshot([QueryField] bool resize, [QueryField] int quality, [QueryField] string size, [QueryField] double scale, [QueryField] bool stream)
+        public void ApplicationScreenshot()
         {
-            HttpResponse response = new HttpResponse();
-
-            try
-            {
-                quality = Math.Clamp(quality, -1, 100);
-                if (quality == 0)
-                    quality = -1; // quality should be set to -1 for png if omitted
-
-                if (resize && string.IsNullOrWhiteSpace(size))
-                    size = "640x480";
-
-                Size new_size = Size.Empty;
-                if (resize)
-                {
-                    string[] s = size.Split('x');
-                    int width = int.Parse(s[0]);
-                    int height = int.Parse(s[1]);
-                    new_size = new Size(width, height);
-                }
-
-                Bitmap screenshot = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
-
-                using (Graphics g = Graphics.FromImage(screenshot))
-                {
-                    g.CopyFromScreen(Screen.PrimaryScreen.Bounds.X,
-                                        Screen.PrimaryScreen.Bounds.Y,
-                                        0, 0,
-                                        screenshot.Size,
-                                        CopyPixelOperation.SourceCopy);
-                }
-
-                BitmapSource source = ImageUtility.ConvertBitmap(screenshot);
-
-                if (stream)
-                {
-                    BitmapEncoder encoder = null;
-                    if (scale == 0 && resize)
-                    {
-                        BitmapSource image = BitmapHelper.ResizeBitmap(source, new_size);
-                        encoder = BitmapHelper.GetEncoder(image, quality);
-                    }
-                    if (scale != 0 && resize)
-                    {
-                        BitmapSource image = BitmapHelper.ScaleBitmap(source, scale);
-                        encoder = BitmapHelper.GetEncoder(image, quality);
-                    }
-                    if (!resize)
-                    {
-                        BitmapSource image = BitmapHelper.ScaleBitmap(source, 1);
-                        encoder = BitmapHelper.GetEncoder(image, quality);
-                    }
-                    HttpContext.Response.ContentType = quality == -1 ? "image/png" : "image/jpg";
-                    using (MemoryStream memory = new MemoryStream())
-                    {
-                        encoder.Save(memory);
-                        await HttpContext.Response.OutputStream.WriteAsync(memory.GetBuffer().AsMemory(0, (int)memory.Length));
-                        return;
-                    }
-                }
-                else
-                {
-
-                    if (scale == 0 && resize)
-                        response.Response = BitmapHelper.ResizeAndConvertBitmap(source, new_size, quality);
-                    if (scale != 0 && resize)
-                        response.Response = BitmapHelper.ScaleAndConvertBitmap(source, scale, quality);
-                    if (!resize)
-                        response.Response = BitmapHelper.ScaleAndConvertBitmap(source, 1, quality);
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(ex);
-                response = CoreUtility.CreateErrorTable(CommonErrors.UNKNOWN_ERROR);
-            }
-
-            HttpContext.WriteToResponse(response);
+            HttpContext.WriteToResponse(CoreUtility.CreateErrorTable(new Error("Screenshots are not available on PI 'N' Stars (headless)", 501)));
         }
 
         [Route(HttpVerbs.Get, "/application/plugins")]

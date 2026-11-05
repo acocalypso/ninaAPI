@@ -312,31 +312,13 @@ namespace ninaAPI.WebService.V2
             }
             if (HttpContext.IsParameterOmitted(nameof(bayerPattern)) || autoPrepare)
             {
-                if (profile.CameraSettings.BayerPattern != BayerPatternEnum.Auto)
-                {
-                    sensor = (SensorType)profile.CameraSettings.BayerPattern;
-                }
-                else if (AdvancedAPI.Controls.Camera.GetInfo().Connected)
-                {
-                    sensor = AdvancedAPI.Controls.Camera.GetInfo().SensorType;
-                }
-                else
-                {
-                    sensor = SensorType.Monochrome;
-                }
+                sensor = DebayerPattern.SensorTypeFor(profile.CameraSettings.BayerPattern, AdvancedAPI.Controls.Camera.GetInfo());
             }
-            else
+            else if (!DebayerPattern.TryParse(bayerPattern, out sensor))
             {
-                try
-                {
-                    sensor = Enum.Parse<SensorType>(bayerPattern);
-                }
-                catch (Exception)
-                {
-                    response = CoreUtility.CreateErrorTable(new Error("Invalid bayer pattern", 400));
-                    HttpContext.WriteToResponse(response);
-                    return;
-                }
+                response = CoreUtility.CreateErrorTable(new Error("Invalid bayer pattern", 400));
+                HttpContext.WriteToResponse(response);
+                return;
             }
 
             quality = Math.Clamp(quality, -1, 100);
@@ -368,6 +350,7 @@ namespace ninaAPI.WebService.V2
 
                 // NINA already debayered the prepared image when the profile's DebayerImage is on; debayering it again garbles it
                 if (renderedImage is not IDebayeredImage
+                    && DebayerPattern.CanDebayer(sensor)
                     && (debayer || (autoPrepare && renderedImage.RawImageData.Properties.IsBayered)))
                 {
                     try
@@ -675,31 +658,13 @@ namespace ninaAPI.WebService.V2
             }
             if (HttpContext.IsParameterOmitted(nameof(bayerPattern)) || autoPrepare)
             {
-                if (profile.CameraSettings.BayerPattern != BayerPatternEnum.Auto)
-                {
-                    sensor = (SensorType)profile.CameraSettings.BayerPattern;
-                }
-                else if (AdvancedAPI.Controls.Camera.GetInfo().Connected)
-                {
-                    sensor = AdvancedAPI.Controls.Camera.GetInfo().SensorType;
-                }
-                else
-                {
-                    sensor = SensorType.Monochrome;
-                }
+                sensor = DebayerPattern.SensorTypeFor(profile.CameraSettings.BayerPattern, AdvancedAPI.Controls.Camera.GetInfo());
             }
-            else
+            else if (!DebayerPattern.TryParse(bayerPattern, out sensor))
             {
-                try
-                {
-                    sensor = Enum.Parse<SensorType>(bayerPattern);
-                }
-                catch (Exception)
-                {
-                    response = CoreUtility.CreateErrorTable(new Error("Invalid bayer pattern", 400));
-                    HttpContext.WriteToResponse(response);
-                    return;
-                }
+                response = CoreUtility.CreateErrorTable(new Error("Invalid bayer pattern", 400));
+                HttpContext.WriteToResponse(response);
+                return;
             }
 
             quality = Math.Clamp(quality, -1, 100);
@@ -751,7 +716,8 @@ namespace ninaAPI.WebService.V2
                     {
                         IRenderedImage renderedImage = imageData.RenderImage();
 
-                        if (debayer || (autoPrepare && renderedImage.RawImageData.Properties.IsBayered))
+                        if (DebayerPattern.CanDebayer(sensor)
+                            && (debayer || (autoPrepare && renderedImage.RawImageData.Properties.IsBayered)))
                         {
                             renderedImage = renderedImage.Debayer(bayerPattern: sensor, saveColorChannels: true, saveLumChannel: true);
                         }

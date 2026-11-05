@@ -119,7 +119,11 @@ namespace ninaAPI.WebService.V2
                 offsetMin = cam.GetInfo().offsetMin,
                 TempChangeRunning = cam.TempChangeRunning,
                 TargetTemp = cam.TargetTemp,
-                AtTargetTemp = cam.GetInfo().Temperature == cam.GetInfo().TemperatureSetPoint,
+                // Exact equality of temperature and set point almost never held, and it held mid-ramp. NINA's own
+                // AtTargetTemp compares with the target set at connect, which /cool does not update.
+                AtTargetTemp = cam.GetInfo().CoolerOn
+                    && !cam.TempChangeRunning
+                    && Math.Abs(cam.GetInfo().Temperature - cam.GetInfo().TemperatureSetPoint) <= 2,
             };
         }
         public double TargetTemp { get; set; }

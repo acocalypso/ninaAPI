@@ -257,6 +257,9 @@ namespace ninaAPI.WebService.V2
                     // A reconnect may bring back the same guider object in the same state,
                     // which is still news after the disconnect
                     lastState = null;
+
+                    // /guider/info showed the last step of the disconnected guider
+                    lastGuideStep = null;
                 }
                 // Broadcast on connect and disconnect, which is when the device changes
                 ObserveGuider();
