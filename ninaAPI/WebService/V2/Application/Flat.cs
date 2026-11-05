@@ -35,7 +35,33 @@ namespace ninaAPI.WebService.V2
 {
     public partial class ControllerV2
     {
-        private static Task flatTask;
+        private static Task currentFlatTask;
+
+        // the run's failure was never looked at: a run that ended on an exception reported "Finished" and left no log line
+        private static Task flatTask
+        {
+            get => currentFlatTask;
+            set
+            {
+                currentFlatTask = value;
+                value?.ContinueWith(t =>
+                {
+                    var error = t.Exception?.GetBaseException();
+                    if (error is not OperationCanceledException)
+                    {
+                        Logger.Error($"Flat run failed: {error}");
+                    }
+                }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
+            }
+        }
+
+        // a flat run during a sequence mixed its filter changes and exposures into the sequence's
+        private static HttpResponse RefuseWhileSequenceRuns()
+        {
+            return AdvancedAPI.Controls.Sequence.IsAdvancedSequenceRunning()
+                ? CoreUtility.CreateErrorTable(new Error("A sequence is running", 409))
+                : null;
+        }
         private static CancellationTokenSource flatCancellationToken;
         private static SequentialContainer container;
 
@@ -115,6 +141,16 @@ namespace ninaAPI.WebService.V2
                 if (!flatTask?.IsCompleted ?? false)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Process already running", 400));
+                }
+                else if (RefuseWhileSequenceRuns() is { } refused)
+                {
+                    response = refused;
+                }
+                else if (darkCount > 0)
+                {
+                    // the dark flats take their exposure time from a trained flat setting, which sky flats never create:
+                    // they were dropped without a word. A sky flat's exposure time also changes from frame to frame
+                    response = CoreUtility.CreateErrorTable(new Error("Dark flats are not available with sky flats (the exposure time changes from frame to frame)", 400));
                 }
                 else
                 {
@@ -255,6 +291,10 @@ namespace ninaAPI.WebService.V2
                 if (!flatTask?.IsCompleted ?? false)
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Process already running", 400));
+                }
+                else if (RefuseWhileSequenceRuns() is { } refused)
+                {
+                    response = refused;
                 }
                 else
                 {
@@ -404,6 +444,10 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Process already running", 400));
                 }
+                else if (RefuseWhileSequenceRuns() is { } refused)
+                {
+                    response = refused;
+                }
                 else
                 {
                     AutoExposureFlat flats = new AutoExposureFlat(AdvancedAPI.Controls.Profile,
@@ -538,6 +582,10 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Process already running", 400));
                 }
+                else if (RefuseWhileSequenceRuns() is { } refused)
+                {
+                    response = refused;
+                }
                 else
                 {
                     TrainedDarkFlatExposure flats = new TrainedDarkFlatExposure(AdvancedAPI.Controls.Profile,
@@ -650,6 +698,12 @@ namespace ninaAPI.WebService.V2
                 {
                     response = CoreUtility.CreateErrorTable(new Error("Process already running", 400));
                     HttpContext.WriteToResponse(response);
+                    return;
+                }
+
+                if (RefuseWhileSequenceRuns() is { } refused)
+                {
+                    HttpContext.WriteToResponse(refused);
                     return;
                 }
                 if (!AdvancedAPI.Controls.Camera.GetInfo().Connected)
@@ -888,6 +942,10 @@ namespace ninaAPI.WebService.V2
     public struct FlatStatusResponse
     {
         public string State { get; }
+
+        /// <summary>Why the run failed (State "Failed"), null otherwise.</summary>
+        public string Error { get; }
+
         public string Type { get; }
         public int TotalIterations { get; }
         public int CompletedIterations { get; }
@@ -902,9 +960,24 @@ namespace ninaAPI.WebService.V2
 
         public FlatStatusResponse(SequentialContainer container, Task task)
         {
-            if (task is not null)
+            // a failed or stopped run reported "Finished" like a complete one
+            Error = null;
+            if (task is null)
             {
-                State = task.IsCompleted ? "Finished" : "Running";
+                State = "Finished";
+            }
+            else if (!task.IsCompleted)
+            {
+                State = "Running";
+            }
+            else if (task.IsCanceled || task.Exception?.GetBaseException() is OperationCanceledException)
+            {
+                State = "Cancelled";
+            }
+            else if (task.IsFaulted)
+            {
+                State = "Failed";
+                Error = task.Exception.GetBaseException().Message;
             }
             else
             {
