@@ -99,11 +99,6 @@ namespace ninaAPI.WebService.V2
                 exposureItem = abf.GetExposureItem();
                 switchFilterItem = abf.GetSwitchFilterItem();
             }
-            else if (flatContainer is SkyFlat sf)
-            {
-                exposureItem = sf.GetExposureItem();
-                switchFilterItem = sf.GetSwitchFilterItem();
-            }
 
             if (exposureItem != null)
             {
@@ -222,36 +217,8 @@ namespace ninaAPI.WebService.V2
                         flatCancellationToken = new CancellationTokenSource();
                         var progress = AdvancedAPI.Controls.StatusMediator.GetStatus();
                         var token = flatCancellationToken.Token;
-                        if (darkCount > 0)
-                        {
-                            flatTask = Task.Run(async () =>
-                            {
-                                await flats.Execute(progress, token);
-                                if (!token.IsCancellationRequested)
-                                {
-                                    // waits for the user: after 5 min it answered OK on its own, and the dark flats were
-                                    // taken with the scope open; cancelling the flat run ends it
-                                    var result = await MyMessageBoxBroadcaster.Instance.ShowMessageBoxAsync(
-                                        Loc.Instance["LblCoverScopeMsgBox"],
-                                        Loc.Instance["LblCoverScopeMsgBoxTitle"],
-                                        MessageBoxButton.OKCancel,
-                                        MessageBoxResult.OK,
-                                        Timeout.InfiniteTimeSpan,
-                                        token);
-                                    if (result != MessageBoxResult.OK || token.IsCancellationRequested)
-                                        return;
-
-                                    var darks = BuildDarkFlatsContainer(flats, darkCount, keepClosed: false);
-                                    container = darks;
-                                    if (darks.Validate())
-                                        await darks.Execute(progress, token);
-                                }
-                            });
-                        }
-                        else
-                        {
-                            flatTask = flats.Execute(progress, token);
-                        }
+                        // dark flats are refused above
+                        flatTask = flats.Execute(progress, token);
                         response.Response = "Process started";
                     }
                     else

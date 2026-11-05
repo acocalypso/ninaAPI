@@ -647,13 +647,14 @@ namespace ninaAPI.WebService.V2
 
     public class MountAxisMoveSocket : WebSocketModule
     {
-        private static DateTime eastTimer;
+        // Environment.TickCount64 values: the app sets the system time, and DateTime.Now also jumps with DST
+        private static long eastTimer;
         private double eastRate;
-        private static DateTime westTimer;
+        private static long westTimer;
         private double westRate;
-        private static DateTime northTimer;
+        private static long northTimer;
         private double northRate;
-        private static DateTime southTimer;
+        private static long southTimer;
         private double southRate;
 
         private static object _timerLock = new object();
@@ -695,15 +696,15 @@ namespace ninaAPI.WebService.V2
                             }
                             lock (_timerLock)
                             {
-                                eastTimer = DateTime.Now;
+                                eastTimer = Environment.TickCount64;
                                 eastRate = rate;
                             }
                             DelayedAction.Execute(TimeSpan.FromMilliseconds(2000), () =>
                             {
                                 lock (_timerLock)
                                 {
-                                    Logger.Debug($"Time since last message: {DateTime.Now - eastTimer}");
-                                    if (DateTime.Now - eastTimer > TimeSpan.FromSeconds(1.8)) // This difference is due to the inaccuracy of the cpu scheduler
+                                    Logger.Debug($"Time since last message: {TimeSpan.FromMilliseconds(Environment.TickCount64 - eastTimer)}");
+                                    if (TimeSpan.FromMilliseconds(Environment.TickCount64 - eastTimer) > TimeSpan.FromSeconds(1.8)) // This difference is due to the inaccuracy of the cpu scheduler
                                     {
                                         mount.MoveAxis(TelescopeAxes.Primary, 0);
                                         eastRate = 0;
@@ -719,15 +720,15 @@ namespace ninaAPI.WebService.V2
                             }
                             lock (_timerLock)
                             {
-                                westTimer = DateTime.Now;
+                                westTimer = Environment.TickCount64;
                                 westRate = rate;
                             }
                             DelayedAction.Execute(TimeSpan.FromMilliseconds(2000), () =>
                             {
                                 lock (_timerLock)
                                 {
-                                    Logger.Debug($"Time since last message: {DateTime.Now - westTimer}");
-                                    if (DateTime.Now - westTimer > TimeSpan.FromSeconds(1.8))
+                                    Logger.Debug($"Time since last message: {TimeSpan.FromMilliseconds(Environment.TickCount64 - westTimer)}");
+                                    if (TimeSpan.FromMilliseconds(Environment.TickCount64 - westTimer) > TimeSpan.FromSeconds(1.8))
                                     {
                                         mount.MoveAxis(TelescopeAxes.Primary, 0);
                                         westRate = 0;
@@ -743,15 +744,15 @@ namespace ninaAPI.WebService.V2
                             }
                             lock (_timerLock)
                             {
-                                northTimer = DateTime.Now;
+                                northTimer = Environment.TickCount64;
                                 northRate = rate;
                             }
                             DelayedAction.Execute(TimeSpan.FromMilliseconds(2000), () =>
                             {
                                 lock (_timerLock)
                                 {
-                                    Logger.Debug($"Time since last message: {DateTime.Now - northTimer}");
-                                    if (DateTime.Now - northTimer > TimeSpan.FromSeconds(1.8))
+                                    Logger.Debug($"Time since last message: {TimeSpan.FromMilliseconds(Environment.TickCount64 - northTimer)}");
+                                    if (TimeSpan.FromMilliseconds(Environment.TickCount64 - northTimer) > TimeSpan.FromSeconds(1.8))
                                     {
                                         mount.MoveAxis(TelescopeAxes.Secondary, 0);
                                         northRate = 0;
@@ -767,15 +768,15 @@ namespace ninaAPI.WebService.V2
                             }
                             lock (_timerLock)
                             {
-                                southTimer = DateTime.Now;
+                                southTimer = Environment.TickCount64;
                                 southRate = rate;
                             }
                             DelayedAction.Execute(TimeSpan.FromMilliseconds(2000), () =>
                             {
                                 lock (_timerLock)
                                 {
-                                    Logger.Debug($"Time since last message: {DateTime.Now - southTimer}");
-                                    if (DateTime.Now - southTimer > TimeSpan.FromSeconds(1.8))
+                                    Logger.Debug($"Time since last message: {TimeSpan.FromMilliseconds(Environment.TickCount64 - southTimer)}");
+                                    if (TimeSpan.FromMilliseconds(Environment.TickCount64 - southTimer) > TimeSpan.FromSeconds(1.8))
                                     {
                                         mount.MoveAxis(TelescopeAxes.Secondary, 0);
                                         southRate = 0;
