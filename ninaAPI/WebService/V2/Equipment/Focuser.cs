@@ -115,7 +115,11 @@ namespace ninaAPI.WebService.V2
             HttpContext.WriteToResponse(response);
         }
 
+        // The API's own move. Its token and task change together under the lock, so parallel move requests can't lose a
+        // token and stop-move can tell whether the move it cancels was still running
+        private static readonly object FocuserMoveLock = new();
         private static CancellationTokenSource FocuserToken;
+        private static Task FocuserMoveTask = Task.CompletedTask;
 
         [Route(HttpVerbs.Get, "/equipment/focuser/move")]
         public void FocuserMove([QueryField] int position)
@@ -131,9 +135,16 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    FocuserToken?.Cancel();
-                    FocuserToken = new CancellationTokenSource();
-                    BackgroundOperation.Report(focuser.MoveFocuser(position, FocuserToken.Token), "FOCUSER-MOVE-FAILED", "Focuser move");
+                    Task move;
+                    lock (FocuserMoveLock)
+                    {
+                        FocuserToken?.Cancel();
+                        FocuserToken = new CancellationTokenSource();
+                        move = focuser.MoveFocuser(position, FocuserToken.Token);
+                        FocuserMoveTask = move;
+                    }
+
+                    BackgroundOperation.Report(move, "FOCUSER-MOVE-FAILED", "Focuser move");
                     response.Response = "Move started";
                 }
             }
@@ -246,8 +257,30 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    FocuserToken?.Cancel();
-                    response.Response = "Focuser move stopped";
+                    // Only the API's own move can be stopped here: autofocus, the sequence and filter offsets move
+                    // with their own token (NINA has no halt for them; a device halt is undone by their move loops).
+                    // An API move still waiting for one of them to release the focuser counts as running: it is what
+                    // gets stopped, and the other operation goes on.
+                    bool apiMoveRunning;
+                    lock (FocuserMoveLock)
+                    {
+                        apiMoveRunning = !FocuserMoveTask.IsCompleted;
+                        FocuserToken?.Cancel();
+                        FocuserToken = null;
+                    }
+
+                    if (apiMoveRunning)
+                    {
+                        response.Response = "Focuser move stopped";
+                    }
+                    else if (focuser.GetInfo().IsMoving)
+                    {
+                        response = CoreUtility.CreateErrorTable(new Error("The focuser is moved by another operation (autofocus, sequence); stop that operation", 409));
+                    }
+                    else
+                    {
+                        response.Response = "No focuser move was running";
+                    }
                 }
             }
             catch (Exception ex)

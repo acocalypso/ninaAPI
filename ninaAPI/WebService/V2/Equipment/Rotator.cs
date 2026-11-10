@@ -124,9 +124,9 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    RotatorToken?.Cancel();
-                    RotatorToken = new CancellationTokenSource();
-                    BackgroundOperation.Report(rotator.Move(position, RotatorToken.Token), "ROTATOR-MOVE-FAILED", "Rotator move");
+                    var token = new CancellationTokenSource();
+                    Interlocked.Exchange(ref RotatorToken, token)?.Cancel();
+                    BackgroundOperation.Report(rotator.Move(position, token.Token), "ROTATOR-MOVE-FAILED", "Rotator move");
                     response.Response = "Rotator move started";
                 }
             }
@@ -154,9 +154,9 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    RotatorToken?.Cancel();
-                    RotatorToken = new CancellationTokenSource();
-                    BackgroundOperation.Report(rotator.MoveMechanical(position, RotatorToken.Token), "ROTATOR-MOVE-FAILED", "Rotator mechanical move");
+                    var token = new CancellationTokenSource();
+                    Interlocked.Exchange(ref RotatorToken, token)?.Cancel();
+                    BackgroundOperation.Report(rotator.MoveMechanical(position, token.Token), "ROTATOR-MOVE-FAILED", "Rotator mechanical move");
                     response.Response = "Rotator move started";
                 }
             }
@@ -234,7 +234,12 @@ namespace ninaAPI.WebService.V2
                 }
                 else
                 {
-                    RotatorToken?.Cancel();
+                    Interlocked.Exchange(ref RotatorToken, null)?.Cancel();
+
+                    // NINA's stop button: it cancels the rotator VM's current move, whoever started it (a sequence's
+                    // rotate then goes on as if it was done), and halts the device
+                    var rotatorVM = (RotatorVM)typeof(RotatorMediator).GetField("handler", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(AdvancedAPI.Controls.Rotator);
+                    rotatorVM.HaltCommand.Execute(null);
                     response.Response = "Rotator move stopped";
                 }
             }

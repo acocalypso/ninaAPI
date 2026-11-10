@@ -90,6 +90,26 @@ namespace ninaAPI.WebService.V2
         }
 
 
+        // Device types that need Windows (MetaGuide: user32.dll; SkyGuard: a local SkyGuard program and a localhost
+        // callback; AllPro Spike-a-Flat: its Windows USB DLL). NINA's choosers list them on Linux too, and choosing
+        // one failed only later, mid-session.
+        private static readonly HashSet<string> WindowsOnlyDeviceTypes = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "MetaGuideGuider",
+            "SkyGuardGuider",
+            "AllProSpikeAFlat",
+        };
+
+        private static IList<IDevice> DevicesForThisPlatform(IList<IDevice> devices)
+        {
+            if (devices == null || OperatingSystem.IsWindows())
+            {
+                return devices;
+            }
+
+            return devices.Where(d => d == null || !WindowsOnlyDeviceTypes.Contains(d.GetType().Name)).ToList();
+        }
+
         [Route(HttpVerbs.Get, "/equipment/{device}/list-devices")]
         public void ListDevices(string device)
         {
@@ -102,7 +122,7 @@ namespace ninaAPI.WebService.V2
 
                 if (chooser != null)
                 {
-                    response.Response = chooser.Devices;
+                    response.Response = DevicesForThisPlatform(chooser.Devices);
                 }
                 else
                 {
@@ -251,12 +271,12 @@ namespace ninaAPI.WebService.V2
                     if (command is AsyncCommand<bool> cmd)
                     {
                         await cmd.ExecuteAsync(null);
-                        response.Response = chooser.Devices;
+                        response.Response = DevicesForThisPlatform(chooser.Devices);
                     }
                     else
                     {
                         await ((AsyncRelayCommand<bool>)command).ExecuteAsync(null);
-                        response.Response = chooser.Devices;
+                        response.Response = DevicesForThisPlatform(chooser.Devices);
                     }
                 }
                 else
