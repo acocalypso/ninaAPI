@@ -12,6 +12,7 @@
 using EmbedIO;
 using EmbedIO.Routing;
 using NINA.Core.Utility;
+using ninaAPI.Utility;
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -29,7 +30,7 @@ namespace ninaAPI.WebService.V2
     /// loopback only and refuses browser requests. The plugin's answer is passed through as it
     /// is: its HTTP status, content type and JSON body. These routes therefore do not use the
     /// response envelope of the other routes - a hardware client has to see the real status
-    /// (409 state conflict, 400 invalid input, 410 retired, 504 plugin deadline).
+    /// (409 state conflict, 400 invalid input, 504 plugin deadline).
     ///
     /// Errors raised by the relay itself are JSON objects { "error": string, "available": bool }:
     ///   413  request body larger than <see cref="MlastroMaxBodyBytes"/>
@@ -43,9 +44,6 @@ namespace ninaAPI.WebService.V2
     /// </summary>
     public partial class ControllerV2
     {
-        /// <summary>Loopback port of the MLAstro RPA plugin. Kept out of this API's own port search.</summary>
-        internal const int MlastroControlPort = 1891;
-
         private const int MlastroMaxBodyBytes = 4096;
 
         // Reads are polled and answer from memory. Writes stay above the plugin's own deadline
@@ -108,17 +106,6 @@ namespace ninaAPI.WebService.V2
         [Route(HttpVerbs.Post, "/mlastro/automation")]
         public Task MlastroAutomation() => RelayMlastroAsync("automation", true);
 
-        // Continuous jogging is retired: the plugin answers these three with 410. They stay
-        // relayed so that an outdated client reads that answer instead of a 404.
-        [Route(HttpVerbs.Post, "/mlastro/jog/start")]
-        public Task MlastroJogStart() => RelayMlastroAsync("jog/start", true);
-
-        [Route(HttpVerbs.Post, "/mlastro/jog/renew")]
-        public Task MlastroJogRenew() => RelayMlastroAsync("jog/renew", true);
-
-        [Route(HttpVerbs.Post, "/mlastro/jog/stop")]
-        public Task MlastroJogStop() => RelayMlastroAsync("jog/stop", true);
-
         private async Task RelayMlastroAsync(string operation, bool post)
         {
             var elapsed = Stopwatch.StartNew();
@@ -134,7 +121,7 @@ namespace ninaAPI.WebService.V2
             {
                 using var request = new HttpRequestMessage(
                     post ? HttpMethod.Post : HttpMethod.Get,
-                    $"http://127.0.0.1:{MlastroControlPort}/{operation}");
+                    $"http://127.0.0.1:{CoreUtility.MlastroControlPort}/{operation}");
 
                 if (post)
                 {
