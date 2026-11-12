@@ -124,7 +124,9 @@ namespace ninaAPI.Utility
         {
             using var watch = MyStopWatch.Measure();
             int port = startPort;
-            while (!IsPortAvailable(port))
+            // The MLAstro RPA plugin binds its loopback control port after this API has started,
+            // so that port can still look free here. Taking it would break the MLAstro relay.
+            while (!IsPortAvailable(port) || port == WebService.V2.ControllerV2.MlastroControlPort)
             {
                 port++;
             }
